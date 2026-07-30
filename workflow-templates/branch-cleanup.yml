@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   sweep:
-    uses: nsfintech/.github/.github/workflows/branch-cleanup.yml@main
+    uses: nsfintech/.github/.github/workflows/branch-cleanup.yml@v1
     with:
       retention-days: 14
       # schedule 触发时 inputs.dry-run 为空 -> false；手动触发时取勾选值

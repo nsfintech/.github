@@ -45,7 +45,7 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
      pull-requests: read
    jobs:
      sweep:
-       uses: nsfintech/.github/.github/workflows/branch-cleanup.yml@main
+       uses: nsfintech/.github/.github/workflows/branch-cleanup.yml@v1
        with:
          retention-days: 14
          dry-run: ${{ inputs.dry-run == true }}
@@ -66,8 +66,17 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 
 caller stub 已声明 `permissions: contents: write, pull-requests: read`（删分支引用需 `contents: write`；查 PR 需 `pull-requests: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可授予所需权限，**无需 PAT / GitHub App**。
 
+## 版本管理
+
+本仓库用 tag 做版本管理，调用方按需 pin：
+
+- `@v1`：major tag，跟随 v1.x 最新稳定提交（非破坏性更新自动生效）。**推荐**。
+- `@v1.0.0`：精确版本，完全固定，追求可复现时用。
+- 破坏性变更发布 `@v2`，`@v1` 不会跟进。
+
+当前最新：`v1.0.0`。非破坏性更新会前移 `@v1` 指向新提交（`git tag -f v1 <commit> && git push -f origin v1`）。
+
 ## 备注
 
 - 各仓库需自行 opt-in（GitHub 没有「自动注入所有仓库」的机制）。
 - 想保留 `release/*`、`hotfix/*` 等长期分支：传 `exclude-patterns`，或给它们加 branch protection（受保护分支会被自动跳过）。
-- 稳定后建议给本仓库打 tag（如 `v1`），各调用方改用 `@v1`，避免 `@main` 的改动一次性影响所有仓库。
