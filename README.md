@@ -97,6 +97,8 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 
 两个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。
 
+**release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
+
 注意：GITHUB_TOKEN 创建的 release PR 不会触发其它 workflow 的 `on: pull_request`；若需 release PR 跑 CI，传 PAT/App token。
 
 ## 版本管理
