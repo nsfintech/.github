@@ -1,0 +1,4 @@
+{
+  "name": "Release please (auto versioning)",
+  "description": "基于 Conventional Commits 自动管理版本号、CHANGELOG 与 GitHub release（release-please）。调用 nsfintech/.github 的可复用 workflow。"
+}

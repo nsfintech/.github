@@ -1,0 +1,46 @@
+# 可复用 workflow：自动版本发布（release-please）
+#
+# 基于 Conventional Commits 自动管理版本：往 main 推 feat/fix 等提交后，release-please
+# 会开/更新一个 release PR（含 CHANGELOG 与版本号 bump）；合并该 PR 即自动打 tag、发
+# GitHub release、改版本号文件（如 Cargo.toml）。
+#
+# 运行在调用方仓库上下文（GITHUB_REPOSITORY 为调用方），自动管理调用方的发布。
+# 暴露 outputs（release_created / tag_name）供调用方做发版后处理（如前移 major tag）。
+# 调用方 stub 见 workflow-templates/release-please.yml。
+name: release-please (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      release-type:
+        description: 'release-please release type (rust/node/python/go/java/simple...)；多包独立版本的 workspace 省略此项，改用仓库内 release-please-config.json'
+        type: string
+        required: false
+      token:
+        description: 'GitHub token，默认调用方 GITHUB_TOKEN；若需 release PR 触发其它 workflow，传 PAT/GitHub App token'
+        type: string
+        required: false
+    outputs:
+      release_created:
+        description: '本次运行是否创建了 release（"true" / "false"）'
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: '本次创建的 release tag（如 v1.1.0）；未发版则为空'
+        value: ${{ jobs.release-please.outputs.tag_name }}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ inputs.token || secrets.GITHUB_TOKEN }}
+          release-type: ${{ inputs.release-type }}

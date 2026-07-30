@@ -1,0 +1,23 @@
+# starter 模板：各仓库 Actions -> New workflow 选 "Release please" 后，本文件被复制到
+# 该仓库的 .github/workflows/release-please.yml，成为调用方 stub。
+#
+# 工作机制：推 Conventional Commits 到 main -> release-please 开 release PR -> 合并即自动发版。
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    uses: nsfintech/.github/.github/workflows/release-please.yml@v1
+    with:
+      # 按项目类型改：rust / node / python / go / java / simple
+      # 多包独立版本的 workspace：省略 release-type，在仓库加 release-please-config.json
+      release-type: rust
+    secrets: inherit
