@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # 删除分支引用（git refs）需要写权限
-      pulls: read # 查询已合并/已关闭 PR 的时间需要
+      pull-requests: read # 查询已合并/已关闭 PR 的时间需要
     steps:
       - name: Sweep and delete stale branches
         env:
