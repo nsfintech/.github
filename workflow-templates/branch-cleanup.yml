@@ -1,0 +1,29 @@
+# 此文件是 starter 模板：组织内各仓库在 Actions 标签页 "New workflow" 选择本模板后，
+# GitHub 会把本文件复制到该仓库的 .github/workflows/branch-cleanup.yml，
+# 成为「调用方 stub」——它每天定时调用 nsfintech/.github 里的可复用 workflow。
+#
+# 启用前请先在该仓库 Settings -> General -> Pull Requests 关闭
+# "Automatically delete head branches"（否则一合并就秒删，延迟无意义）。
+name: Branch cleanup
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # 每天 03:17 UTC 巡扫
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 试运行（只列出将删除的分支，不实际删除）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # 删除分支引用需要写权限
+
+jobs:
+  sweep:
+    uses: nsfintech/.github/.github/workflows/branch-cleanup.yml@main
+    with:
+      retention-days: 14
+      # schedule 触发时 inputs.dry-run 为空 -> false；手动触发时取勾选值
+      dry-run: ${{ inputs.dry-run == true }}
+    secrets: inherit

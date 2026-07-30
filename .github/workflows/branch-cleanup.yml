@@ -1,0 +1,153 @@
+# 可复用 workflow：延迟删除分支
+#
+# 行为：合并或关闭未合并的分支，超过 retention-days 天后自动删除。
+# 跳过：默认分支、受保护分支、有 open PR 的分支、没有任何已关闭 PR 的分支。
+# 运行上下文：本 workflow 被「调用方仓库」通过 uses: 调用，运行在调用方仓库的
+#   上下文里（GITHUB_REPOSITORY / GITHUB_TOKEN 均为调用方），因此自动作用于调用方仓库。
+# 调用方 stub 见 workflow-templates/branch-cleanup.yml。
+#
+# 前置条件：调用方仓库必须关闭 GitHub 自带的 "Automatically delete head branches"
+#   （Settings -> General -> Pull Requests），否则分支一合并就被秒删，本延迟逻辑无意义。
+name: Branch cleanup (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      retention-days:
+        description: 分支保留天数（合并/关闭后多少天删除）
+        type: number
+        default: 14
+      dry-run:
+        description: 试运行（只列出将删除的分支，不实际删除）
+        type: boolean
+        default: false
+      exclude-patterns:
+        description: 额外永不删除的分支名 glob，逗号分隔（默认仅保护默认分支 + 受保护分支）
+        type: string
+        default: ''
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 删除分支引用（git refs）需要写权限
+    steps:
+      - name: Sweep and delete stale branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RETENTION: ${{ inputs.retention-days }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          EXCLUDE: ${{ inputs.exclude-patterns }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::配置"
+          echo "保留天数 (retention-days): $RETENTION"
+          echo "试运行 (dry-run): $DRY_RUN"
+          echo "额外排除 (exclude-patterns): ${EXCLUDE:-(无)}"
+          echo "::endgroup::"
+
+          # 校验保留天数为正整数
+          case "$RETENTION" in
+            ''|*[!0-9]*) echo "::error::retention-days 必须是正整数，当前为 '$RETENTION'"; exit 1 ;;
+          esac
+          if [ "$RETENTION" -lt 1 ]; then
+            echo "::error::retention-days 必须 >= 1"
+            exit 1
+          fi
+
+          # 截止时间：早于此时间合并/关闭的分支才会被删除
+          cutoff=$(date -u -d "${RETENTION} days ago" +%s)
+          echo "截止时间：$(date -u -d "@$cutoff" +%Y-%m-%dT%H:%M:%SZ) 之前合并/关闭的分支将被删除"
+
+          # 默认分支（永远不删）
+          default=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+          echo "默认分支：$default"
+
+          # 收集有 open PR 的分支（跳过，避免删到正在用的分支）
+          echo "::group::收集有 open PR 的分支（将跳过）"
+          open_branches=$(gh pr list --state open --json headRefName --limit 500 --jq '.[].headRefName' 2>/dev/null | sort -u || true)
+          echo "${open_branches:-(无)}"
+          echo "::endgroup::"
+
+          # 额外排除 glob：逗号分隔 -> 多行
+          excludes=$(printf '%s' "${EXCLUDE:-}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')
+
+          match_exclude() {
+            local b="$1" pat
+            while IFS= read -r pat; do
+              [ -z "$pat" ] && continue
+              # shell glob 匹配（pat 不加引号以启用通配符）
+              case "$b" in
+                $pat) return 0 ;;
+              esac
+            done <<< "$excludes"
+            return 1
+          }
+
+          deleted=0
+          failed=0
+          skipped=0
+          candidates=0
+
+          echo "::group::扫描分支"
+          # 列出所有非受保护分支，逐个判断
+          while IFS= read -r branch; do
+            [ -z "$branch" ] && continue
+            candidates=$((candidates + 1))
+
+            # 1) 跳过默认分支
+            if [ "$branch" = "$default" ]; then
+              echo "skip  (默认分支):   $branch"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 2) 跳过额外白名单
+            if [ -n "$excludes" ] && match_exclude "$branch"; then
+              echo "skip  (白名单):     $branch"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 3) 跳过有 open PR 的分支
+            if printf '%s\n' "$open_branches" | grep -qxF "$branch"; then
+              echo "skip  (有 open PR): $branch"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 4) 取该分支最近若干个已关闭 PR 的最新 合并/关闭 时间
+            #    mergedAt 优先（已合并），否则 closedAt（关闭未合并）
+            ref=$(gh pr list --head "$branch" --state closed --json mergedAt,closedAt --limit 30 2>/dev/null \
+                  | jq -r '[.[].mergedAt, .[].closedAt] | map(select(. != null and . != "")) | max // empty' 2>/dev/null || true)
+
+            if [ -z "$ref" ]; then
+              echo "skip  (无已关闭 PR): $branch"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 5) 解析时间为 epoch
+            if ! ref_epoch=$(date -u -d "$ref" +%s 2>/dev/null); then
+              echo "::warning::时间解析失败，跳过: $branch ($ref)"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 6) 未到期则跳过
+            if [ "$ref_epoch" -gt "$cutoff" ]; then
+              echo "skip  (尚未到期):   $branch  关闭于 $(date -u -d "$ref" +%Y-%m-%dT%H:%M:%SZ)"; skipped=$((skipped + 1)); continue
+            fi
+
+            # 7) 删除分支（git refs 接口，分支名含 '/' 也支持）
+            echo "==> 删除: $branch  (关闭于 $(date -u -d "$ref" +%Y-%m-%dT%H:%M:%SZ))"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "     试运行，未实际删除"
+            else
+              if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" 2>/dev/null; then
+                echo "     已删除"; deleted=$((deleted + 1))
+              else
+                echo "::warning::删除失败: $branch"; failed=$((failed + 1))
+              fi
+            fi
+          done < <(gh api "repos/${GITHUB_REPOSITORY}/branches" --paginate --jq '.[] | select(.protected == false) | .name' 2>/dev/null || true)
+          echo "::endgroup::"
+
+          echo "::group::汇总"
+          echo "候选分支数: $candidates"
+          echo "已删除:     $deleted"
+          echo "删除失败:   $failed"
+          echo "跳过:       $skipped"
+          [ "$DRY_RUN" = "true" ] && echo "(试运行模式，未实际删除任何分支)"
+          echo "::endgroup::"

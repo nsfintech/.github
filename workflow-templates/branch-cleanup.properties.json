@@ -1,0 +1,4 @@
+{
+  "name": "Branch cleanup (delayed deletion)",
+  "description": "每天巡扫，删除合并/关闭超过 N 天的远程分支（替代 GitHub 合并即秒删）。调用 nsfintech/.github 的可复用 workflow。"
+}
