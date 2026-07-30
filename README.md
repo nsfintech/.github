@@ -35,7 +35,7 @@ GitHub Actions 无法「睡 14 天」，所以采用**每日定时巡扫**：每
 
 | 输入 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `retention-days` | number | `14` | 合并/关闭后保留多少天 |
+| `retention-days` | number | `14` | 合并/关闭后保留多少天（`0`=下次巡扫即删） |
 | `dry-run` | boolean | `false` | 试运行，只列不删 |
 | `exclude-patterns` | string | `''` | 额外永不删除的分支名 glob，逗号分隔，如 `release/*,hotfix/*` |
 

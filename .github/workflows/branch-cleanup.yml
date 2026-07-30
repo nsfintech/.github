@@ -14,7 +14,7 @@ on:
   workflow_call:
     inputs:
       retention-days:
-        description: 分支保留天数（合并/关闭后多少天删除）
+        description: 分支保留天数（合并/关闭后多少天删除；0=下次巡扫即删）
         type: number
         default: 14
       dry-run:
@@ -49,10 +49,10 @@ jobs:
 
           # 校验保留天数为正整数
           case "$RETENTION" in
-            ''|*[!0-9]*) echo "::error::retention-days 必须是正整数，当前为 '$RETENTION'"; exit 1 ;;
+            ''|*[!0-9]*) echo "::error::retention-days 必须是非负整数，当前为 '$RETENTION'"; exit 1 ;;
           esac
-          if [ "$RETENTION" -lt 1 ]; then
-            echo "::error::retention-days 必须 >= 1"
+          if [ "$RETENTION" -lt 0 ]; then
+            echo "::error::retention-days 必须 >= 0"
             exit 1
           fi
 
