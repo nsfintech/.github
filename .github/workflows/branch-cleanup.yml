@@ -68,7 +68,7 @@ jobs:
 
           # 收集有 open PR 的分支（跳过，避免删到正在用的分支）
           echo "::group::收集有 open PR 的分支（将跳过）"
-          open_branches=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f state=open -f per_page=100 --paginate --jq '.[].head.ref' 2>/dev/null | sort -u || true)
+          open_branches=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/pulls" -f state=open -f per_page=100 --paginate --jq '.[].head.ref' 2>/dev/null | sort -u || true)
           echo "${open_branches:-(无)}"
           echo "::endgroup::"
 
@@ -115,7 +115,7 @@ jobs:
 
             # 4) 取该分支最近若干个已关闭 PR 的最新 合并/关闭 时间
             #    merged_at 优先（已合并），否则 closed_at（关闭未合并）；用显式 API 路径
-            ref=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f state=closed -f head="${OWNER}:${branch}" -f per_page=30 \
+            ref=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/pulls" -f state=closed -f head="${OWNER}:${branch}" -f per_page=30 \
                   --jq '[.[].merged_at, .[].closed_at] | map(select(. != null and . != "")) | max // empty' 2>/dev/null || true)
 
             if [ -z "$ref" ]; then
