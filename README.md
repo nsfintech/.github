@@ -53,7 +53,7 @@ jobs:
 
 ### 权限
 
-caller stub 和可复用 workflow 都声明了 `permissions: contents: write`（删除分支引用需要）。若仓库 Settings → Actions → General → Workflow permissions 设为 "Read-only"，需改为 "Read and write permissions" 或保持 workflow 内显式声明。
+caller stub 和可复用 workflow 都声明了 `permissions: contents: write` + `pulls: read`（删除分支引用需要 contents: write；查询已合并/已关闭 PR 需要 pulls: read）。若仓库 Settings → Actions → General → Workflow permissions 设为 "Read-only"，需改为 "Read and write permissions" 或保持 workflow 内显式声明。
 
 ---
 

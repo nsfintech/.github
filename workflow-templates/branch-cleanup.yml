@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write # 删除分支引用需要写权限
+  pulls: read # 查询 PR 需要读取权限
 
 jobs:
   sweep:
