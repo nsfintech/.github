@@ -35,6 +35,7 @@ jobs:
       - name: Sweep and delete stale branches
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }} # 让 gh 在无 checkout 时也能定位到调用方仓库
           RETENTION: ${{ inputs.retention-days }}
           DRY_RUN: ${{ inputs.dry-run }}
           EXCLUDE: ${{ inputs.exclude-patterns }}
