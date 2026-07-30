@@ -93,6 +93,17 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 
 **Rust workspace**：单版本 workspace（如 gateway，`[workspace.package] version`）可直接 `release-type: rust`；多包独立版本则省略 `release-type`，在仓库加 `release-please-config.json` 描述各组件。
 
+**主动指定版本号**（`Release-As`）：需要强制某个版本（如新项目从 `0.1.0` 起、或某次跳到 `1.0.0`）时，在提交 body 加 `Release-As: X.Y.Z`（大小写不敏感），release-please 下次发版即用该版本、忽略 commit 类型；一次性，发完恢复自动 bump。
+
+```bash
+# 新项目从 0.1.0 起
+git commit --allow-empty -m "chore: start versioning at 0.1.0" -m "Release-As: 0.1.0"
+# 某次跳到 1.0.0
+git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
+```
+
+持久/初始配置，或 0.x 的 bump 策略（`bump-minor-pre-major` 等），可在仓库内 `release-please-config.json` 设置（此时 caller stub 省略 `release-type`）。
+
 ## 权限
 
 两个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。
