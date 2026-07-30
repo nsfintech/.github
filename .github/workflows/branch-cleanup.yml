@@ -35,7 +35,6 @@ jobs:
       - name: Sweep and delete stale branches
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }} # 让 gh 在无 checkout 时也能定位到调用方仓库
           RETENTION: ${{ inputs.retention-days }}
           DRY_RUN: ${{ inputs.dry-run }}
           EXCLUDE: ${{ inputs.exclude-patterns }}
@@ -61,13 +60,14 @@ jobs:
           cutoff=$(date -u -d "${RETENTION} days ago" +%s)
           echo "截止时间：$(date -u -d "@$cutoff" +%Y-%m-%dT%H:%M:%SZ) 之前合并/关闭的分支将被删除"
 
-          # 默认分支（永远不删）
-          default=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+          # 默认分支（永远不删）—— 用显式 API 路径，不依赖 git 探测（本 workflow 无 checkout）
+          default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
           echo "默认分支：$default"
+          OWNER=${GITHUB_REPOSITORY%%/*}
 
           # 收集有 open PR 的分支（跳过，避免删到正在用的分支）
           echo "::group::收集有 open PR 的分支（将跳过）"
-          open_branches=$(gh pr list --state open --json headRefName --limit 500 --jq '.[].headRefName' 2>/dev/null | sort -u || true)
+          open_branches=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f state=open -f per_page=100 --paginate --jq '.[].head.ref' 2>/dev/null | sort -u || true)
           echo "${open_branches:-(无)}"
           echo "::endgroup::"
 
@@ -113,9 +113,9 @@ jobs:
             fi
 
             # 4) 取该分支最近若干个已关闭 PR 的最新 合并/关闭 时间
-            #    mergedAt 优先（已合并），否则 closedAt（关闭未合并）
-            ref=$(gh pr list --head "$branch" --state closed --json mergedAt,closedAt --limit 30 2>/dev/null \
-                  | jq -r '[.[].mergedAt, .[].closedAt] | map(select(. != null and . != "")) | max // empty' 2>/dev/null || true)
+            #    merged_at 优先（已合并），否则 closed_at（关闭未合并）；用显式 API 路径
+            ref=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -f state=closed -f head="${OWNER}:${branch}" -f per_page=30 \
+                  --jq '[.[].merged_at, .[].closed_at] | map(select(. != null and . != "")) | max // empty' 2>/dev/null || true)
 
             if [ -z "$ref" ]; then
               echo "skip  (无已关闭 PR): $branch"; skipped=$((skipped + 1)); continue
