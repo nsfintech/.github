@@ -1,0 +1,9 @@
+name: Test minimal
+description: minimal test form
+body:
+  - type: textarea
+    id: foo
+    attributes:
+      label: Foo
+    validations:
+      required: true
