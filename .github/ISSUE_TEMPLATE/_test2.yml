@@ -1,0 +1,9 @@
+name: Test subfolder
+description: minimal test in .github/ISSUE_TEMPLATE subfolder
+body:
+  - type: textarea
+    id: foo
+    attributes:
+      label: Foo
+    validations:
+      required: true
