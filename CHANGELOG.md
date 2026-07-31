@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/nsfintech/.github/compare/v1.1.0...v1.2.0) (2026-07-31)
+
+
+### Features
+
+* **ci:** add rust-ci reusable workflow for rust quality gates ([#3](https://github.com/nsfintech/.github/issues/3)) ([6ee2e77](https://github.com/nsfintech/.github/commit/6ee2e77f7dbf7409427054533e774a0abecbda5b))
+
+
+### Bug Fixes
+
+* place issue templates in .github/ISSUE_TEMPLATE for this repo's own issues ([ea33d8f](https://github.com/nsfintech/.github/commit/ea33d8f5b888d262d9142440f709648c7117db82))
+* place PR template in .github/ for this repo's own PRs ([4a2953d](https://github.com/nsfintech/.github/commit/4a2953d07561c96cd9b1856a8a7f5c3a14f39a8f))
+
 ## [1.1.0](https://github.com/nsfintech/.github/compare/v1.0.0...v1.1.0) (2026-07-30)
 
 
