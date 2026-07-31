@@ -1,0 +1,4 @@
+{
+  "name": "Rust CI (fmt + clippy + deny)",
+  "description": "Rust 质量门禁:cargo fmt --check + clippy -D warnings + cargo deny 供应链审计(漏洞/许可证/禁用 crate/来源)。调用 nsfintech/.github 的可复用 workflow,需在仓库根提供 deny.toml。"
+}

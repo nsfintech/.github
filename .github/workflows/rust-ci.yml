@@ -1,0 +1,62 @@
+# 可复用 workflow:Rust 质量门禁
+#
+# 提供跨 Rust 项目统一的质量门禁,三个并行 job:
+#   - fmt:    cargo fmt --all -- --check(格式检查,不编译)
+#   - clippy: cargo clippy --all-targets -- -D warnings(编译 + lint;warning 升 error)
+#   - deny:   cargo deny check(供应链审计:漏洞 / 许可证 / 禁用 crate / 来源)
+#
+# 不含测试 -- 测试模式因项目而异(单 crate / workspace / nextest / e2e 需外部服务),
+# 后续单独做测试模板;调用方若需测试,在仓库自行加 job。
+#
+# 运行在调用方仓库上下文(GITHUB_REPOSITORY 为调用方),自动 lint 调用方代码。
+# 调用方需在仓库根提供 deny.toml(cargo-deny 配置,per-repo;各仓库依赖不同,不共享)。
+# 调用方 stub 见 workflow-templates/rust-ci.yml。
+name: rust-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      toolchain:
+        description: 'Rust toolchain channel(stable/beta/nightly 或具体版本如 1.97);edition 2024 需 1.85+'
+        type: string
+        default: stable
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features --workspace

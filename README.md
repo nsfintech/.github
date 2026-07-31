@@ -104,9 +104,51 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 
 持久/初始配置，或 0.x 的 bump 策略（`bump-minor-pre-major` 等），可在仓库内 `release-please-config.json` 设置（此时 caller stub 省略 `release-type`）。
 
+### rust-ci：Rust 质量门禁
+
+对 Rust 项目跑统一质量门禁：`cargo fmt --check` + `cargo clippy -D warnings` + `cargo deny check`（供应链审计：漏洞 / 许可证 / 禁用 crate / 来源）。三个 job 并行，只读权限，无需 PAT。
+
+**不含测试**——测试模式因项目而异（单 crate / workspace / nextest / e2e 需外部服务），后续单独做测试模板；需要测试的仓库自行加 job。
+
+文件：可复用 workflow [`rust-ci.yml`](.github/workflows/rust-ci.yml) / starter 模板 [`workflow-templates/rust-ci.yml`](workflow-templates/rust-ci.yml)。
+
+**前提**：调用方仓库根需有 `deny.toml`（cargo-deny 配置，per-repo；各仓库依赖不同，不共享）。无则 cargo-deny 用内置默认（较严格，可能直接红），可参考 `nsfintech/gateway` 的 deny.toml 起一份。
+
+**如何使用**（某 Rust 仓库）：
+
+1. 在仓库根加 `deny.toml`（参考 gateway，或 `cargo deny init` 生成模板后定制）。
+2. 加 caller stub：Actions -> New workflow -> 搜 "Rust CI" -> 采用；或手动新建 `.github/workflows/rust-ci.yml`：
+   ```yaml
+   name: rust-ci
+   on:
+     push:
+       branches: [main]
+     pull_request:
+   permissions:
+     contents: read
+   jobs:
+     rust-ci:
+       uses: nsfintech/.github/.github/workflows/rust-ci.yml@v1
+       secrets: inherit
+   ```
+3. 推 main 或开 PR，fmt / clippy / deny 三个 job 并行跑；任一失败即门禁红。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `toolchain` | string | `stable` | Rust toolchain channel（stable/beta/nightly 或具体版本）；edition 2024 需 1.85+ |
+
+**cargo-deny 审计范围**：
+
+- `advisories`：依赖是否命中 RUSTSEC 已知漏洞 / yanked 版本。
+- `licenses`：依赖许可证是否在 `deny.toml` 白名单（防意外引入 GPL/AGPL 等传染性 license）。
+- `bans`：禁用特定 crate（默认 deny `openssl`/`openssl-sys`，强制 rustls；可按仓库在 `deny.toml` 调整）。
+- `sources`：限制依赖来源（只允许 crates.io，禁 git 依赖）。
+
 ## 权限
 
-两个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。
+三个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

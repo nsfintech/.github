@@ -1,0 +1,22 @@
+# starter 模板:组织内各仓库在 Actions 标签页 "New workflow" 选择本模板后,GitHub
+# 会把本文件复制到该仓库的 .github/workflows/rust-ci.yml,成为「调用方 stub」--它在
+# push main 与 PR 时调用 nsfintech/.github 里的可复用 workflow。
+#
+# 提供三项质量门禁:cargo fmt --check + cargo clippy -D warnings + cargo deny check。
+# 调用方需在仓库根提供 deny.toml(cargo-deny 配置);无则 cargo-deny 用内置默认(较
+# 严格,可能直接红),可参考 nsfintech/gateway 的 deny.toml 起一份。
+# 不含测试;需要测试的仓库自行加 job。
+name: rust-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-ci:
+    uses: nsfintech/.github/.github/workflows/rust-ci.yml@v1
+    secrets: inherit
