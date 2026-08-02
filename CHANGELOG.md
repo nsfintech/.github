@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/nsfintech/.github/compare/v1.2.0...v1.2.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* enable releases for shared-version rust workspaces ([#5](https://github.com/nsfintech/.github/issues/5)) ([81ee586](https://github.com/nsfintech/.github/commit/81ee586df8d943395ed643b980206e22d2c40119))
+
 ## [1.2.0](https://github.com/nsfintech/.github/compare/v1.1.0...v1.2.0) (2026-07-31)
 
 
