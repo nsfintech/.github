@@ -52,7 +52,7 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 
 ### release-please：自动版本发布
 
-基于 Conventional Commits 自动管理版本号、CHANGELOG 与 GitHub release（封装 `googleapis/release-please-action@v4`）。
+基于 Conventional Commits 自动管理版本号、CHANGELOG 与 GitHub release（基于自建 fork [`nsfintech/release-please`](https://github.com/nsfintech/release-please) 跑 release-please CLI，非官方 `googleapis/release-please-action`；这样组织内可用上 fork 里对 Rust workspace 共享版本 `version.workspace = true` 的修复）。
 
 **工作机制**（Release-PR 门禁）：
 
@@ -89,6 +89,7 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 | 输入 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `release-type` | string | - | `rust`/`node`/`python`/`go`/`java`/`simple` 等；省略则用仓库内 `release-please-config.json`（多包 workspace） |
+| `release-please-ref` | string | `main` | fork（`nsfintech/release-please`）的分支/commit/tag；默认 `main` 跟随最新，需要可复现时固定到 commit |
 | `token` | string | `GITHUB_TOKEN` | 默认调用方 token；若需 release PR 触发其它 workflow，传 PAT/App token |
 
 **Rust workspace**：单版本 workspace（如 gateway，`[workspace.package] version`）可直接 `release-type: rust`；多包独立版本则省略 `release-type`，在仓库加 `release-please-config.json` 描述各组件。

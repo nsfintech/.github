@@ -7,6 +7,11 @@
 # 运行在调用方仓库上下文（GITHUB_REPOSITORY 为调用方），自动管理调用方的发布。
 # 暴露 outputs（release_created / tag_name）供调用方做发版后处理（如前移 major tag）。
 # 调用方 stub 见 workflow-templates/release-please.yml。
+#
+# 与官方不同：本 workflow 不依赖 googleapis/release-please-action（其内置 release-please
+# 包，无法指向我们的 fork），而是直接 checkout 自建 fork（nsfintech/release-please）、
+# npm install + 编译后用其 CLI 跑 release-pr / github-release。这样调用方自动用上 fork
+# 里对 Rust workspace 共享版本（version.workspace = true）的修复。
 name: release-please (reusable)
 
 on:
@@ -16,6 +21,11 @@ on:
         description: 'release-please release type (rust/node/python/go/java/simple...)；多包独立版本的 workspace 省略此项，改用仓库内 release-please-config.json'
         type: string
         required: false
+      release-please-ref:
+        description: 'fork（nsfintech/release-please）的分支/commit/tag，默认 main（最新）；追求可复现时固定到一个 commit'
+        type: string
+        required: false
+        default: main
       token:
         description: 'GitHub token，默认调用方 GITHUB_TOKEN；若需 release PR 触发其它 workflow，传 PAT/GitHub App token'
         type: string
@@ -36,11 +46,66 @@ jobs:
       issues: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.rp.outputs.release_created }}
-      tag_name: ${{ steps.rp.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - id: rp
-        uses: googleapis/release-please-action@v4
+      # 调用方仓库本体（需要其 release-please-config.json / Cargo.toml 等），以及
+      # 合并 release PR 后的 tag（github-release 打在该 merge commit 上，即本次 push 的 HEAD）。
+      - uses: actions/checkout@v4
         with:
-          token: ${{ inputs.token || secrets.GITHUB_TOKEN }}
-          release-type: ${{ inputs.release-type }}
+          fetch-depth: 0
+
+      # fork 的 release-please 源码（prepare 脚本会自动 npm run compile，这里再显式编译兜底）
+      - uses: actions/checkout@v4
+        with:
+          repository: nsfintech/release-please
+          ref: ${{ inputs.release-please-ref }}
+          path: release-please
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build release-please
+        working-directory: release-please
+        run: |
+          npm install --no-audit --no-fund
+          npm run compile
+
+      - id: release
+        name: Create GitHub release
+        run: |
+          set -euo pipefail
+          CLI="node release-please/build/src/bin/release-please.js"
+          ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
+          if [ -n "$RELEASE_TYPE" ]; then
+            ARGS+=(--release-type "$RELEASE_TYPE")
+          fi
+          "$CLI" github-release "${ARGS[@]}"
+
+          # 检测本次是否打了 tag（release-please 为 release PR 的 merge commit 打 tag，
+          # 即本次 push 的 HEAD）。fetch 后按 semver 形状匹配。
+          git fetch --tags --force origin
+          TAG="$(git tag --points-at HEAD | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+($|-)' | head -1 || true)"
+          if [ -n "$TAG" ]; then
+            echo "release_created=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_created=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          TOKEN: ${{ inputs.token || secrets.GITHUB_TOKEN }}
+          RELEASE_TYPE: ${{ inputs.release-type }}
+
+      - name: Create release PR
+        run: |
+          set -euo pipefail
+          CLI="node release-please/build/src/bin/release-please.js"
+          ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
+          if [ -n "$RELEASE_TYPE" ]; then
+            ARGS+=(--release-type "$RELEASE_TYPE")
+          fi
+          "$CLI" release-pr "${ARGS[@]}"
+        env:
+          TOKEN: ${{ inputs.token || secrets.GITHUB_TOKEN }}
+          RELEASE_TYPE: ${{ inputs.release-type }}
