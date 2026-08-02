@@ -20,4 +20,6 @@ jobs:
       # 按项目类型改：rust / node / python / go / java / simple
       # 多包独立版本的 workspace：省略 release-type，在仓库加 release-please-config.json
       release-type: rust
+      # 可选：固定 fork（nsfintech/release-please）版本，默认 main（跟随最新）
+      # release-please-ref: <commit>
     secrets: inherit
