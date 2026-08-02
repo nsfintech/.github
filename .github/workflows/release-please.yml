@@ -76,12 +76,12 @@ jobs:
         name: Create GitHub release
         run: |
           set -euo pipefail
-          CLI="node release-please/build/src/bin/release-please.js"
+          CLI=(node release-please/build/src/bin/release-please.js)
           ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
           if [ -n "$RELEASE_TYPE" ]; then
             ARGS+=(--release-type "$RELEASE_TYPE")
           fi
-          "$CLI" github-release "${ARGS[@]}"
+          "${CLI[@]}" github-release "${ARGS[@]}"
 
           # 检测本次是否打了 tag（release-please 为 release PR 的 merge commit 打 tag，
           # 即本次 push 的 HEAD）。fetch 后按 semver 形状匹配。
@@ -100,12 +100,12 @@ jobs:
       - name: Create release PR
         run: |
           set -euo pipefail
-          CLI="node release-please/build/src/bin/release-please.js"
+          CLI=(node release-please/build/src/bin/release-please.js)
           ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
           if [ -n "$RELEASE_TYPE" ]; then
             ARGS+=(--release-type "$RELEASE_TYPE")
           fi
-          "$CLI" release-pr "${ARGS[@]}"
+          "${CLI[@]}" release-pr "${ARGS[@]}"
         env:
           TOKEN: ${{ inputs.token || secrets.GITHUB_TOKEN }}
           RELEASE_TYPE: ${{ inputs.release-type }}
