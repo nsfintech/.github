@@ -28,7 +28,7 @@ on:
 
 jobs:
   sweep:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: write # 删除分支引用（git refs）需要写权限
       pull-requests: read # 查询已合并/已关闭 PR 的时间需要
