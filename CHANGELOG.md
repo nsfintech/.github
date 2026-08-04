@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/nsfintech/.github/compare/v1.2.1...v1.3.0) (2026-08-04)
+
+
+### Features
+
+* **ci:** support self-hosted runner for org workflows ([#8](https://github.com/nsfintech/.github/issues/8)) ([bdc1b72](https://github.com/nsfintech/.github/commit/bdc1b72f95d32ea2680596f8f8dcf173d2add2b0))
+
 ## [1.2.1](https://github.com/nsfintech/.github/compare/v1.2.0...v1.2.1) (2026-08-02)
 
 
