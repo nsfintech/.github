@@ -24,7 +24,7 @@ on:
 jobs:
   fmt:
     name: cargo fmt
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: read
     steps:
@@ -37,7 +37,7 @@ jobs:
 
   clippy:
     name: cargo clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: read
     steps:
@@ -51,7 +51,7 @@ jobs:
 
   deny:
     name: cargo deny
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     permissions:
       contents: read
     steps:
