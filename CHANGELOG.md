@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/nsfintech/.github/compare/v1.3.0...v1.3.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **ci:** drop rust-cache step from clippy job ([#10](https://github.com/nsfintech/.github/issues/10)) ([89c6d17](https://github.com/nsfintech/.github/commit/89c6d17d95b3944f0ce17c9de157588f35f23975))
+
 ## [1.3.0](https://github.com/nsfintech/.github/compare/v1.2.1...v1.3.0) (2026-08-04)
 
 
