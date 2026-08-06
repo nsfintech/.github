@@ -1,0 +1,37 @@
+# starter 模板:组织内各仓库在 Actions 标签页 "New workflow" 选本模板后,GitHub 把本文件
+# 复制到该仓库的 .github/workflows/docker-build-push.yml,成为「调用方 stub」--它在
+# release-please 打 v* tag 时(以及手动 workflow_dispatch 时)调用 nsfintech/.github 里
+# 的可复用 workflow。
+#
+# 触发时机:
+#   - push v* tag(release-please 合并 release PR 后自动打 tag -> 触发):构建 + 推送
+#     semver/sha/latest 镜像(prod 发版镜像),push 固定为 true。
+#   - workflow_dispatch(手动):用于手工测试镜像构建。push 输入控制是否推送:
+#       true(默认)= 推 sha 镜像,可拉取运行测试;false = 只构建不推,验证 Dockerfile 能编。
+#     手动构建只打 sha-<短sha>,不打 latest/semver,不污染 release 镜像。
+#
+# 认证不传 secrets:凭证来自自托管 runner 的 .env(服务级账号,永不过期),在可复用 workflow
+# 里读取。调用方需在仓库根提供 Dockerfile(默认 ./Dockerfile,路径不同用 file 输入)。
+name: docker-build-push
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '推送镜像(false 则只构建,用于测试 Dockerfile)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    uses: nsfintech/.github/.github/workflows/docker-build-push.yml@v1
+    with:
+      # image-name 默认用本仓库名;需子分组或改名时取消下面注释:
+      # image-name: ${{ github.event.repository.name }}
+      push: ${{ github.event_name == 'push' || inputs.push }}
+    # 无需 secrets: inherit -- 凭证来自 runner .env,不是 GitHub secret

@@ -1,0 +1,144 @@
+# 可复用 workflow:构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。
+#
+# 认证来自自托管 runner 的 .env(DOCKER_REGISTRY/DOCKER_NAMESPACE/DOCKER_USERNAME/
+# DOCKER_PASSWORD),不是 GitHub secret -- nsfintech 是 Free 组织,私有仓库用不了 org 级
+# secrets。runner .env 变量只在 run 步骤的 shell 可用、不在 env 上下文,所以第一步先桥接
+# 到 $GITHUB_ENV(并 add-mask),后续 action 才能用 ${{ env.* }}。凭证用 TCR 服务级账号
+# (永不过期),不是 1h 临时登录指令。
+#
+# tag 策略(metadata-action):
+#   - sha-<短sha>:每次必有,可追溯
+#   - v1.2.3 / 1.2.3 / 1.2 / 1:semver,仅 v* tag 触发时(type=semver 在非 tag 事件静默跳过)
+#   - latest:flavor latest=auto,仅非预发布 v* tag 时跟最新 release;手动 dispatch 不打
+#
+# 调用方 stub 见 workflow-templates/docker-build-push.yml:release-please 打 v* tag 时
+# 触发(prod 发版镜像);也支持 workflow_dispatch 手工测试构建(push 输入控制是否推送)。
+name: docker-build-push (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: '镜像名(不含 registry/namespace);默认用调用方仓库名,需子分组传 team/repo'
+        type: string
+        default: ${{ github.event.repository.name }}
+      context:
+        description: '构建上下文路径'
+        type: string
+        default: '.'
+      file:
+        description: 'Dockerfile 路径'
+        type: string
+        default: './Dockerfile'
+      target:
+        description: '多阶段构建目标 stage(可选)'
+        type: string
+        default: ''
+      platforms:
+        description: '构建平台;多架构需调用方自行加 setup-qemu(本 workflow 默认仅 amd64)'
+        type: string
+        default: 'linux/amd64'
+      push:
+        description: '是否推送;false 则只构建(用于测试 Dockerfile 能否编译)'
+        type: boolean
+        default: true
+      cache-type:
+        description: '缓存后端:gha(GitHub Actions cache,10G/7天)/ registry(存 TCR buildcache tag,无限制)/ none'
+        type: string
+        default: 'gha'
+      latest:
+        description: 'true=auto(跟最新非预发布 release tag 打 latest)/ false=不打 latest'
+        type: boolean
+        default: true
+      build-args:
+        description: '构建参数,多行 KEY=VALUE'
+        type: string
+        default: ''
+      provenance:
+        description: '是否生成 OCI provenance attestation(TCR 兼容性未知,默认关)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 从 runner env 载入 TCR 凭证(桥接到 GITHUB_ENV + 脱敏)
+        run: |
+          for v in DOCKER_REGISTRY DOCKER_NAMESPACE DOCKER_USERNAME DOCKER_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::runner env 缺少 $v(检查自托管 runner .env 是否就位、是否已重启加载)"
+              exit 1
+            fi
+          done
+          echo "::add-mask::$DOCKER_USERNAME"
+          echo "::add-mask::$DOCKER_PASSWORD"
+          {
+            echo "DOCKER_REGISTRY=$DOCKER_REGISTRY"
+            echo "DOCKER_NAMESPACE=$DOCKER_NAMESPACE"
+            echo "DOCKER_USERNAME=$DOCKER_USERNAME"
+            echo "DOCKER_PASSWORD=$DOCKER_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: 镜像元数据(tags + labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/${{ inputs.image-name }}
+          flavor: latest=${{ inputs.latest == true && 'auto' || 'false' }}
+          tags: |
+            type=sha,format=short
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: 配置缓存
+        id: cache
+        run: |
+          case "${{ inputs.cache-type }}" in
+            gha)
+              echo "from=type=gha" >> "$GITHUB_OUTPUT"
+              echo "to=type=gha,mode=max" >> "$GITHUB_OUTPUT"
+              ;;
+            registry)
+              ref="${DOCKER_REGISTRY}/${DOCKER_NAMESPACE}/${{ inputs.image-name }}:buildcache"
+              echo "from=type=registry,ref=${ref}" >> "$GITHUB_OUTPUT"
+              echo "to=type=registry,ref=${ref},mode=max" >> "$GITHUB_OUTPUT"
+              ;;
+            none)
+              :  # 不缓存,from/to 留空
+              ;;
+            *)
+              echo "::error::未知 cache-type: ${{ inputs.cache-type }}(应为 gha/registry/none)"
+              exit 1
+              ;;
+          esac
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          target: ${{ inputs.target }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
+          provenance: ${{ inputs.provenance }}
