@@ -6,9 +6,15 @@
 # 触发时机:
 #   - push v* tag(release-please 合并 release PR 后自动打 tag -> 触发):构建 + 推送
 #     semver/sha/latest 镜像(prod 发版镜像),push 固定为 true。
+#     v* 也匹配预发布 tag(v1.2.3-rc.1):metadata-action 自动对预发布 tag 不打 latest,
+#     故 rc 只产 v1.2.3-rc.1 / 1.2.3-rc.1 等镜像,不覆盖 prod latest,适合测试环境。
 #   - workflow_dispatch(手动):用于手工测试镜像构建。push 输入控制是否推送:
 #       true(默认)= 推 sha 镜像,可拉取运行测试;false = 只构建不推,验证 Dockerfile 能编。
 #     手动构建只打 sha-<短sha>,不打 latest/semver,不污染 release 镜像。
+#
+# 注意:release-please 用默认 GITHUB_TOKEN 打的 tag 不会触发本 stub 的 on: push: tags
+# (GITHUB_TOKEN 推送不触发下游 workflow)。要让 rc/stable tag 自动构建镜像,需给
+# release-please 传 PAT/GitHub App token(见 nsfintech/.github README);否则用 workflow_dispatch 手动构建。
 #
 # 认证不传 secrets:凭证来自自托管 runner 的 .env(服务级账号,永不过期),在可复用 workflow
 # 里读取。调用方需在仓库根提供 Dockerfile(默认 ./Dockerfile,路径不同用 file 输入)。

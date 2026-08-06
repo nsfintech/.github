@@ -1,12 +1,25 @@
 # starter 模板：各仓库 Actions -> New workflow 选 "Release please" 后，本文件被复制到
 # 该仓库的 .github/workflows/release-please.yml，成为调用方 stub。
 #
-# 工作机制：推 Conventional Commits 到 main -> release-please 开 release PR -> 合并即自动发版。
+# 分支与发布模型（test->main + hotfix）：
+#   - feature/* 从 test 拉、合并回 test（test 是集成分支）
+#   - 推 feat/fix 到 test -> release-please 开 "chore(test): release X.Y.Z-rc.N" PR ->
+#     合并该 PR -> 自动打 vX.Y.Z-rc.N tag + GH prerelease（rc.1/rc.2 自动递增）。
+#     rc 不写 CHANGELOG.md（留 GH Release notes）、不前移 major tag、不打 docker latest。
+#   - test 合并到 main -> main 自动开 "chore(main): release X.Y.Z" PR -> 合并 ->
+#     打 vX.Y.Z tag + GH stable release。依赖 fork(nsfintech/release-please)的 graduation
+#     改动:stable 模式跳过 prerelease tag 作 baseline,rc tag 进 main 不会挡 stable 发版。
+#     详见 README「graduation」。
+#   - hotfix/* 从 main 拉（不碰 test 未验证工作）-> 合并回 main（切 patch stable）+
+#     回合并到 test（让 test 不落后）。详见 nsfintech/.github README「分支与发布模型」。
+#
+# 工作机制：推 Conventional Commits 到 main/test -> release-please 按 prerelease 输入
+# 切 rc 或 stable。test 分支需在 branch-cleanup 里 exclude-patterns 排除（长期分支）。
 name: release-please
 
 on:
   push:
-    branches: [main]
+    branches: [main, test]
 
 permissions:
   contents: write
@@ -19,7 +32,11 @@ jobs:
     with:
       # 按项目类型改：rust / node / python / go / java / simple
       # 多包独立版本的 workspace：省略 release-type，在仓库加 release-please-config.json
+      #   （此时 prerelease 需在该 config 文件里配，下面的 prerelease 输入不生效）
       release-type: rust
+      # test 分支切 rc 预发布（vX.Y.Z-rc.N），main 切 stable。分支名不同改这里的判断。
+      prerelease: ${{ github.ref_name == 'test' }}
+      prerelease-type: rc
       # 可选：固定 fork（nsfintech/release-please）版本，默认 main（跟随最新）
       # release-please-ref: <commit>
     secrets: inherit
