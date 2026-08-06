@@ -147,9 +147,69 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 - `bans`：禁用特定 crate（默认 deny `openssl`/`openssl-sys`，强制 rustls；可按仓库在 `deny.toml` 调整）。
 - `sources`：限制依赖来源（只允许 crates.io，禁 git 依赖）。
 
+### docker-build-push：构建并推送 Docker 镜像
+
+构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。release-please 打 `v*` tag 时触发，打 `semver`/`sha`/`latest` 标签；也支持手动 `workflow_dispatch` 测试构建。
+
+**认证不走 GitHub secret**：nsfintech 是 Free 组织，私有仓库用不了 org 级 secrets；凭证（`DOCKER_REGISTRY`/`DOCKER_NAMESPACE`/`DOCKER_USERNAME`/`DOCKER_PASSWORD`）配在**自托管 runner 的 `.env`** 里，workflow 启动时桥接到 `$GITHUB_ENV`（并 `add-mask`）。`DOCKER_USERNAME`/`DOCKER_PASSWORD` 用 **TCR 服务级账号**（永不过期），不是 1h 临时登录指令。
+
+**tag 策略**（metadata-action）：
+
+| 触发 | 产出 tag |
+| --- | --- |
+| 所有 | `sha-<短sha>`（可追溯）|
+| `v*` tag（release-please 发版）| `v1.2.3` / `1.2.3` / `1.2` / `1`（semver）|
+| `v*` tag（非预发布）| `latest`（`flavor: latest=auto`，手动 dispatch / 预发布 tag 不打）|
+
+文件：可复用 workflow [`docker-build-push.yml`](.github/workflows/docker-build-push.yml) / starter 模板 [`workflow-templates/docker-build-push.yml`](workflow-templates/docker-build-push.yml)。
+
+**前提**：自托管 runner 已配 `.env`（4 个 `DOCKER_*` 变量、服务级账号凭证、已重启加载）；调用方仓库根有 `Dockerfile`（默认 `./Dockerfile`）。
+
+**如何使用**（某仓库）：
+
+1. 确认仓库已有 `Dockerfile`（路径非默认则用 `file` 输入指定）。
+2. 加 caller stub：Actions -> New workflow -> 搜 "Docker build & push" -> 采用；或手动新建 `.github/workflows/docker-build-push.yml`：
+   ```yaml
+   name: docker-build-push
+   on:
+     push:
+       tags: ['v*']
+     workflow_dispatch:
+       inputs:
+         push:
+           description: '推送镜像(false 则只构建,用于测试 Dockerfile)'
+           type: boolean
+           default: true
+   permissions:
+     contents: read
+   jobs:
+     docker:
+       uses: nsfintech/.github/.github/workflows/docker-build-push.yml@v1
+       with:
+         push: ${{ github.event_name == 'push' || inputs.push }}
+   ```
+3. release-please 合并 release PR -> 自动打 `v*` tag -> 本 workflow 触发，构建并推送 `semver`/`sha`/`latest` 镜像。手动测试：Actions -> Run workflow（`push`=true 推 `sha` 测试镜像可拉取运行；`push`=false 只构建验证 Dockerfile）。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `image-name` | string | 仓库名 | 镜像名（不含 registry/namespace）；需子分组传 `team/repo` |
+| `context` | string | `.` | 构建上下文 |
+| `file` | string | `./Dockerfile` | Dockerfile 路径 |
+| `target` | string | 空 | 多阶段构建目标 stage |
+| `platforms` | string | `linux/amd64` | 构建平台；多架构需调用方自行加 `setup-qemu` |
+| `push` | boolean | `true` | 是否推送；`false` 只构建（测 Dockerfile）|
+| `cache-type` | string | `registry` | 缓存后端：`registry`（存 TCR `:buildcache`，无限制，默认）/ `gha`（GitHub cache，self-hosted 易 400）/ `none` |
+| `latest` | boolean | `true` | `true`=`auto`（跟最新非预发布 tag）/ `false`=不打 `latest` |
+| `build-args` | string | 空 | 多行 `KEY=VALUE` |
+| `provenance` | boolean | `false` | OCI provenance attestation（TCR 默认关）|
+
+**缓存**：默认 `type=registry,mode=max`（缓存存 TCR `<image>:buildcache` tag，mode=max 含多阶段中间层；无 10G/7天 限制，不依赖 GitHub cache 服务）。self-hosted runner 上 `type=gha` 易因 GitHub cache 服务 400 报错导致构建失败，故默认走 registry；可选 `gha`（GitHub-hosted runner 适用）或 `none`（关缓存）。
+
 ## 权限
 
-三个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。
+四个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci 与 docker-build-push 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR 用 runner `.env` 里的服务级账号凭证，不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

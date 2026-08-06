@@ -1,0 +1,4 @@
+{
+  "name": "Docker build & push (TCR)",
+  "description": "构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。release-please 打 v* tag 时触发,打 semver/sha/latest 标签;也支持手动 workflow_dispatch 测试构建(push 输入控制是否推送)。调用 nsfintech/.github 的可复用 workflow,凭证来自自托管 runner .env(非 GitHub secret)。需在仓库根提供 Dockerfile。"
+}
