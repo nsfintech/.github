@@ -200,12 +200,12 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | `target` | string | 空 | 多阶段构建目标 stage |
 | `platforms` | string | `linux/amd64` | 构建平台；多架构需调用方自行加 `setup-qemu` |
 | `push` | boolean | `true` | 是否推送；`false` 只构建（测 Dockerfile）|
-| `cache-type` | string | `gha` | 缓存后端：`gha`（10G/7天）/ `registry`（存 TCR `:buildcache`，无限制）/ `none` |
+| `cache-type` | string | `registry` | 缓存后端：`registry`（存 TCR `:buildcache`，无限制，默认）/ `gha`（GitHub cache，self-hosted 易 400）/ `none` |
 | `latest` | boolean | `true` | `true`=`auto`（跟最新非预发布 tag）/ `false`=不打 `latest` |
 | `build-args` | string | 空 | 多行 `KEY=VALUE` |
 | `provenance` | boolean | `false` | OCI provenance attestation（TCR 默认关）|
 
-**缓存**：默认 `type=gha,mode=max`（缓存多阶段中间层）。tag 触发间隔 >7 天时 gha 会 evict 导致冷构建，可切 `cache-type: registry`（缓存存 TCR `<image>:buildcache` tag，无大小/时间限制）。
+**缓存**：默认 `type=registry,mode=max`（缓存存 TCR `<image>:buildcache` tag，mode=max 含多阶段中间层；无 10G/7天 限制，不依赖 GitHub cache 服务）。self-hosted runner 上 `type=gha` 易因 GitHub cache 服务 400 报错导致构建失败，故默认走 registry；可选 `gha`（GitHub-hosted runner 适用）或 `none`（关缓存）。
 
 ## 权限
 

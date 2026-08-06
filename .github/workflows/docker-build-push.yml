@@ -43,9 +43,9 @@ on:
         type: boolean
         default: true
       cache-type:
-        description: '缓存后端:gha(GitHub Actions cache,10G/7天)/ registry(存 TCR buildcache tag,无限制)/ none'
+        description: '缓存后端:registry(存 TCR buildcache tag,无限制,默认)/ gha(GitHub cache,self-hosted 易 400)/ none'
         type: string
-        default: 'gha'
+        default: 'registry'
       latest:
         description: 'true=auto(跟最新非预发布 release tag 打 latest)/ false=不打 latest'
         type: boolean
