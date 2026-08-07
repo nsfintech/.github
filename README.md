@@ -250,6 +250,8 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | `cache-type` | string | `registry` | 缓存后端：`registry`（存 TCR `:buildcache`，无限制，默认）/ `gha`（GitHub cache，self-hosted 易 400）/ `none` |
 | `latest` | boolean | `true` | `true`=`auto`（跟最新非预发布 tag）/ `false`=不打 `latest` |
 | `build-args` | string | 空 | 多行 `KEY=VALUE` |
+| `build-command` | string | 空 | 可选：buildx 前在 runner 上执行的多行命令（默认空）。用于先编译/生成产物再打包（如 `cargo build` 后把二进制拷进 context 目录，再让 `context` 指向该目录只做运行镜像），编译复用 runner 的 `~/.cargo/registry` + `target` 缓存，镜像不装编译器。执行前会用 `dtolnay/rust-toolchain` 装 Rust（版本见 `build-command-toolchain`） |
+| `build-command-toolchain` | string | `stable` | `build-command` 用的 Rust toolchain（默认 `stable`）；仅 `build-command` 非空时生效 |
 | `provenance` | boolean | `false` | OCI provenance attestation（TCR 默认关）|
 
 **缓存**：默认 `type=registry,mode=max`（缓存存 TCR `<image>:buildcache` tag，mode=max 含多阶段中间层；无 10G/7天 限制，不依赖 GitHub cache 服务）。self-hosted runner 上 `type=gha` 易因 GitHub cache 服务 400 报错导致构建失败，故默认走 registry；可选 `gha`（GitHub-hosted runner 适用）或 `none`（关缓存）。

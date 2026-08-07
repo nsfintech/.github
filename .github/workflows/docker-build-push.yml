@@ -54,6 +54,14 @@ on:
         description: '构建参数,多行 KEY=VALUE'
         type: string
         default: ''
+      build-command:
+        description: '可选:在 buildx 前于 runner 上先执行的多行命令(默认空)。用于先编译/生成产物再打包(如 cargo build 后把二进制拷进 context 目录),产物目录用传入的 context 指向。会先用 dtolnay/rust-toolchain 装 Rust(默认 stable;toolchain 用 build-command-toolchain 指定)'
+        type: string
+        default: ''
+      build-command-toolchain:
+        description: 'build-command 用的 Rust toolchain channel(默认 stable);仅 build-command 非空时生效'
+        type: string
+        default: stable
       provenance:
         description: '是否生成 OCI provenance attestation(TCR 兼容性未知,默认关)'
         type: boolean
@@ -67,6 +75,22 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
+
+      # 可选 build-command:在 runner 上先执行自定义命令(如 cargo build 后把产物拷进 context 目录)，
+      # 再让 buildx 用 caller 传入的 context 只打包运行镜像。这样编译复用 runner 的
+      # ~/.cargo/registry + target 缓存、镜像不用装编译器。跑之前用 dtolnay/rust-toolchain
+      # 装 Rust(build-command-toolchain,默认 stable),runner 本身不预装。
+      - name: 装 Rust toolchain（build-command 用）
+        if: ${{ inputs.build-command != '' }}
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.build-command-toolchain }}
+
+      - name: 执行 build-command（在 runner 上）
+        if: ${{ inputs.build-command != '' }}
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: ${{ inputs.build-command }}
 
       - name: 从 runner env 载入 TCR 凭证(桥接到 GITHUB_ENV + 脱敏)
         run: |
