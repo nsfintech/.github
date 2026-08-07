@@ -8,12 +8,13 @@
 # 暴露 outputs（release_created / tag_name / prerelease）供调用方做发版后处理（如前移
 # major tag 时跳过预发布）。调用方 stub 见 workflow-templates/release-please.yml。
 #
-# App token（替代 GITHUB_TOKEN）：本 workflow 自动从自托管 runner .env 读 GitHub App 凭证
-# （RELEASE_PLEASE_APP_CLIENT_ID + RELEASE_PLEASE_APP_PRIVATE_KEY_B64，私钥 base64 单行存）换
-# installation token，用它开 release PR / 推 tag。App 是可信协作者 -> release PR 触发的
-# pull_request workflow（如各仓 rust-ci）不被 action_required 审批门禁挡；App 推的 tag 也触发
-# 下游 on: push: tags workflow（如 docker-build-push）。凭证放 runner env 是因为 org 是 Free、
-# 无 org 级 secrets；caller 无需再配 token/secret。未配凭证则回退 GITHUB_TOKEN（旧行为）。
+# App token（替代 GITHUB_TOKEN）：本 workflow 从自托管 runner 读 GitHub App 凭证
+# （Client ID 走 runner .env 的 RELEASE_PLEASE_APP_CLIENT_ID；私钥 PEM 以文件放 runner 上、
+# .env 配路径 RELEASE_PLEASE_APP_PRIVATE_KEY_FILE）换 installation token，用它开 release PR /
+# 推 tag。App 是可信协作者 -> release PR 触发的 pull_request workflow（如各仓 rust-ci）不被
+# action_required 审批门禁挡；App 推的 tag 也触发下游 on: push: tags workflow（如
+# docker-build-push）。凭证放 runner 是因为 org 是 Free、无 org 级 secrets；caller 无需再配
+# token/secret。未配凭证或换取失败则回退 GITHUB_TOKEN（不阻断发版）。
 # App 的创建/安装/凭证见 README「App token（GitHub App 认证）」。
 #
 # 与官方 googleapis/release-please-action 不同：本 workflow 不依赖该 action（其内置
@@ -107,39 +108,54 @@ jobs:
       # 用 GitHub App（而非默认 GITHUB_TOKEN）开 release PR / 推 tag：App 身份是可信协作者，
       # release PR 触发的 pull_request workflow（如各仓 rust-ci）不会被挂 action_required 而需
       # 人工审批；App 推的 tag 也能触发下游 on: push: tags 的 workflow（如 docker-build-push，
-      # GITHUB_TOKEN 推的 tag 不触发）。凭证从自托管 runner .env 读（与 DOCKER_* 同一套载入方式：
-      # org 是 Free、无 org 级 secrets，故凭证放 runner env、不放 GitHub secret），caller 无需配
-      # token/secret。未配则跳过、回退 GITHUB_TOKEN。同一 job 内换 token + 用 token，无需
-      # skip-token-revoke（post 撤销发生在 job 末尾、release 步骤之后）。
-      # 私钥是 PEM 多行，runner .env 是单行 KEY=VALUE，故私钥以 base64 单行存
-      # （RELEASE_PLEASE_APP_PRIVATE_KEY_B64），这里 decode 还原。
-      - name: 载入 release-please App 凭证（runner env -> GITHUB_ENV）
+      # GITHUB_TOKEN 推的 tag 不触发）。凭证放自托管 runner 上、由 workflow 读入（org 是 Free、
+      # 无 org 级 secrets，故不放 GitHub secret），caller 无需配 token/secret。
+      #   - Client ID：runner .env 的 RELEASE_PLEASE_APP_CLIENT_ID（单行）。
+      #   - 私钥 PEM：直接以文件放 runner 上（如 /etc/nsfintech/release-please-app.pem），.env 只存
+      #     路径 RELEASE_PLEASE_APP_PRIVATE_KEY_FILE。不 base64、不塞 env 变量——PEM 本来就是多行
+      #     文件，直接 cat 读进来最稳。.env 未配路径则回退 GITHUB_TOKEN。
+      # 任一环节失败（缺配置 / 文件不存在 / 换 token 报错）都回退 GITHUB_TOKEN、不阻断发版。
+      # 同一 job 内换 token + 用 token，无需 skip-token-revoke（post 撤销在 job 末尾）。
+      - name: 载入 release-please App 凭证（Client ID 从 .env、私钥从 runner 文件）
         id: app-creds
         run: |
-          set -euo pipefail
           cid="${RELEASE_PLEASE_APP_CLIENT_ID:-}"
-          b64="${RELEASE_PLEASE_APP_PRIVATE_KEY_B64:-}"
-          if [ -n "$cid" ] && [ -n "$b64" ]; then
-            pk=$(printf '%s' "$b64" | base64 -d)
-            echo "::add-mask::$pk"
-            echo "RELEASE_PLEASE_APP_CLIENT_ID=$cid" >> "$GITHUB_ENV"
-            {
-              echo "RELEASE_PLEASE_APP_PRIVATE_KEY<<EOF"
-              echo "$pk"
-              echo "EOF"
-            } >> "$GITHUB_ENV"
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::runner env 未配 RELEASE_PLEASE_APP_*，回退 GITHUB_TOKEN（release PR 会被审批门禁挡、tag 不触发下游 workflow）"
+          keyfile="${RELEASE_PLEASE_APP_PRIVATE_KEY_FILE:-}"
+          if [ -z "$cid" ] || [ -z "$keyfile" ]; then
+            echo "::notice::runner 未配 RELEASE_PLEASE_APP_CLIENT_ID / RELEASE_PLEASE_APP_PRIVATE_KEY_FILE，回退 GITHUB_TOKEN"
             echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ ! -f "$keyfile" ]; then
+            echo "::error::私钥文件不存在: $keyfile。把 PEM 放到 runner 上并在 .env 配 RELEASE_PLEASE_APP_PRIVATE_KEY_FILE，回退 GITHUB_TOKEN"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pk="$(cat "$keyfile")"
+          case "$pk" in
+            *'-----BEGIN'*) : ;;
+            *) echo "::error::$keyfile 不是 PEM（缺 -----BEGIN），回退 GITHUB_TOKEN" ; echo "configured=false" >> "$GITHUB_OUTPUT" ; exit 0 ;;
+          esac
+          echo "::add-mask::$pk"
+          echo "RELEASE_PLEASE_APP_CLIENT_ID=$cid" >> "$GITHUB_ENV"
+          {
+            echo "RELEASE_PLEASE_APP_PRIVATE_KEY<<EOF"
+            echo "$pk"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - id: app-token
         if: ${{ steps.app-creds.outputs.configured == 'true' }}
         uses: actions/create-github-app-token@v3
+        continue-on-error: true
         with:
           client-id: ${{ env.RELEASE_PLEASE_APP_CLIENT_ID }}
           private-key: ${{ env.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - name: App token 换取失败告警
+        if: ${{ steps.app-creds.outputs.configured == 'true' && steps.app-token.outcome == 'failure' }}
+        run: echo "::warning::create-github-app-token 失败（检查 Client ID / 私钥 PEM / App 是否安装到本仓库 / 权限 Contents+PRs+Issues write），回退 GITHUB_TOKEN"
 
       - name: Build release-please
         working-directory: release-please

@@ -78,20 +78,23 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 
 文件：可复用 workflow [`release-please.yml`](.github/workflows/release-please.yml) / starter 模板 [`workflow-templates/release-please.yml`](workflow-templates/release-please.yml)。
 
-**App token（GitHub App 认证）**：本 workflow 不用默认 `GITHUB_TOKEN`，而是自动从**自托管 runner 的 `.env`** 读 GitHub App 凭证、用 `actions/create-github-app-token@v3` 换 installation token 来开 release PR / 推 tag。原因：`GITHUB_TOKEN` 开的 PR 是 `github-actions[bot]`，其触发的 `pull_request` workflow 会被 GitHub 挂成 `action_required` 待 maintainer 审批（如各仓 rust-ci 就被挡）；`GITHUB_TOKEN` 推的 tag 也不触发下游 `on: push: tags` workflow（如 docker-build-push）。换成 App 身份（可信协作者）后两者都通。凭证放 runner `.env` 是因为 nsfintech 是 Free 组织、无私有仓 org 级 secrets（与 `DOCKER_*` 同一套载入方式）；**caller 仓库无需再配 token / secret**。
+**App token（GitHub App 认证）**：本 workflow 不用默认 `GITHUB_TOKEN`，而是自动从**自托管 runner** 读 GitHub App 凭证（Client ID 走 `.env`，私钥 PEM 以文件放 runner 上），用 `actions/create-github-app-token@v3` 换 installation token 来开 release PR / 推 tag。原因：`GITHUB_TOKEN` 开的 PR 是 `github-actions[bot]`，其触发的 `pull_request` workflow 会被 GitHub 挂成 `action_required` 待 maintainer 审批（如各仓 rust-ci 就被挡）；`GITHUB_TOKEN` 推的 tag 也不触发下游 `on: push: tags` workflow（如 docker-build-push）。换成 App 身份（可信协作者）后两者都通。凭证放 runner 是因为 nsfintech 是 Free 组织、无私有仓 org 级 secrets（与 `DOCKER_*` 同一思路）；**caller 仓库无需再配 token / secret**。
 
 **一次性组织配置**（org admin 做一次，所有仓库通用）：
 
 1. 建 GitHub App：`github.com/organizations/nsfintech/settings/apps` -> New GitHub App。Webhook 取消 Active；Repository permissions 只把 Contents / Pull requests / Issues 三项设为 **Read and write**，其余 No access。Create。
 2. 记下 **Client ID**（形如 `Iv1.xxxxx`）；General 页底部 Private keys -> Generate a private key（`.pem`）下载。
 3. 安装 App：App 设置 -> Install App -> nsfintech -> **All repositories**（或所有当前+未来仓库）-> Install。
-4. 把凭证配到**每台**自托管 runner 的 `.env`（与 `DOCKER_*` 同处），改完重启 runner 加载：
-   - 先生成私钥的 base64 单行串：`base64 -i private-key.pem | tr -d '\n'`
-   - 在 `.env` 加两行（第二行粘上一步的 base64 串；`.env` 不支持 `$(...)` 展开，要粘实际字符串）：
+4. 把凭证配到**每台**自托管 runner 上，改完重启 runner 加载：
+   - Client ID 放 runner `.env`（与 `DOCKER_*` 同处）：
      ```
      RELEASE_PLEASE_APP_CLIENT_ID=Iv1.xxxxx
-     RELEASE_PLEASE_APP_PRIVATE_KEY_B64=MIIE...（base64 串）
      ```
+   - 私钥 PEM **以文件**放 runner 上（如 `/etc/nsfintech/release-please-app.pem`，`chmod 600`），`.env` 里配路径：
+     ```
+     RELEASE_PLEASE_APP_PRIVATE_KEY_FILE=/etc/nsfintech/release-please-app.pem
+     ```
+     私钥不塞 env 变量、不做任何编码——PEM 本来就是多行文件，直接 cat 读最稳。
 
 未配凭证时本 workflow 自动回退 `GITHUB_TOKEN`（旧行为：release PR 被审批门禁挡、tag 不触发下游），不影响运行。App token 在同一 job 内换取并使用，无需 `skip-token-revoke`。
 
