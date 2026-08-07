@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/nsfintech/.github/compare/v1.3.1...v1.4.0) (2026-08-07)
+
+
+### Features
+
+* **ci:** add docker build/push reusable workflow ([#12](https://github.com/nsfintech/.github/issues/12)) ([4f6d546](https://github.com/nsfintech/.github/commit/4f6d546a1cf9b7349ae03ed797fca2a47b29918a))
+* **ci:** add rc prerelease channel to release-please workflow ([#14](https://github.com/nsfintech/.github/issues/14)) ([728b898](https://github.com/nsfintech/.github/commit/728b898f004e5e6250532e6262d595d60fede996))
+
 ## [1.3.1](https://github.com/nsfintech/.github/compare/v1.3.0...v1.3.1) (2026-08-05)
 
 
