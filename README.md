@@ -48,17 +48,33 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 | --- | --- | --- | --- |
 | `retention-days` | number | `14` | 合并/关闭后保留多少天（`0` = 下次巡扫即删） |
 | `dry-run` | boolean | `false` | 试运行，只列不删 |
-| `exclude-patterns` | string | `''` | 额外永不删除的分支名 glob，逗号分隔，如 `release/*,hotfix/*` |
+| `exclude-patterns` | string | `''` | 额外永不删除的分支名 glob，逗号分隔，如 `release/*,hotfix/*,test` |
 
 ### release-please：自动版本发布
 
-基于 Conventional Commits 自动管理版本号、CHANGELOG 与 GitHub release（基于自建 fork [`nsfintech/release-please`](https://github.com/nsfintech/release-please) 跑 release-please CLI，非官方 `googleapis/release-please-action`；这样组织内可用上 fork 里对 Rust workspace 共享版本 `version.workspace = true` 的修复）。
+基于 Conventional Commits 自动管理版本号、CHANGELOG 与 GitHub release（基于自建 fork [`nsfintech/release-please`](https://github.com/nsfintech/release-please)，编译后通过内联 JS driver 直接调其 JS API `Manifest.fromConfig` / `createReleases` / `createPullRequests`——与官方 `googleapis/release-please-action` 同款入口；这样组织内可用上 fork 里对 Rust workspace 共享版本 `version.workspace = true` 的修复，也能按分支切 rc 预发布）。
 
-**工作机制**（Release-PR 门禁）：
+**工作机制**（Release-PR 门禁，stable + rc 双通道）：
 
-1. 往 main 推 Conventional Commits（`feat:`/`fix:`/`BREAKING CHANGE` 等）。
-2. release-please 自动算版本号（semver：feat→minor、fix→patch、breaking→major），开/更新一个 `chore(main): release X.Y.Z` PR（含 CHANGELOG）。
-3. 合并该 PR → 自动打 tag + 发 GitHub release + 改版本号文件（如 `Cargo.toml`）。
+- **stable（main）**：往 main 推 Conventional Commits -> release-please 自动算版本号（semver：feat->minor、fix->patch、breaking->major），开/更新 `chore(main): release X.Y.Z` PR -> 合并 -> 自动打 `vX.Y.Z` tag + 发 GitHub release + 改版本号文件（如 `Cargo.toml`）。
+- **rc 预发布（test）**：往 test 推 Conventional Commits -> release-please 开/更新 `chore(test): release X.Y.Z-rc.N` PR -> 合并 -> 自动打 `vX.Y.Z-rc` / `vX.Y.Z-rc.1` / `vX.Y.Z-rc.2` ... tag（首个 rc 无编号，后续递增）+ 发 **GH prerelease**。rc **不写 `CHANGELOG.md`**（留 GH Release notes，避免与 main 的 CHANGELOG 冲突）、**不前移 major tag**、**不打 docker `latest`**。test 合并到 main 后**自动 graduation**（见下）。
+
+**分支与发布模型**（采用 rc 通道的仓库）：
+
+| 分支 | 从哪拉 | 合并到 | release-please | 产出 |
+| --- | --- | --- | --- | --- |
+| `feature/*` | `test` | `test` | 不跑 | - |
+| `hotfix/*` | `main` | `main` + `test` | 不跑 | - |
+| `test` | - | `main`（晋升时） | prerelease 模式 | `vX.Y.Z-rc.N` |
+| `main` | - | - | stable 模式 | `vX.Y.Z` |
+
+- feature 从 test 拉（test 是集成分支，承载在途工作）；合并到 test 切 rc。
+- **hotfix 从 main 拉**（不碰 test 未验证工作），修完合并回 main（切 patch stable）**并回合并到 test**（让 test 不落后于 main）。hotfix 的验证在 hotfix 分支自身 CI 完成，不进 test 的验证队列。
+- `test` 是长期分支，需在 branch-cleanup 里 `exclude-patterns: test` 排除。
+
+**graduation（test -> main 晋升 stable，自动）**：合并 test -> main 后，main 上 release-please **自动**开 `chore(main): release X.Y.Z` PR（合并即打 `vX.Y.Z` stable tag）。这依赖自建 fork（[`nsfintech/release-please`](https://github.com/nsfintech/release-please)）的改动：stable 模式找 baseline 时跳过 prerelease tag，所以 rc tag 进 main 后不会被当作"最近 release"，main 仍以最近 stable 为基线、从其后的 conventional commit 算出 stable 版本（`rc.N -> X.Y.Z`）。mainline release-please 做不到（[googleapis/release-please#2515](https://github.com/googleapis/release-please/issues/2515)），故 fork 加了此能力。
+
+人工门禁是"合并 test -> main"这个动作本身--stable 发版时机由人决定（合并即发）。rc 本身也全自动（`rc` -> `rc.1` -> `rc.2`）。
 
 文件：可复用 workflow [`release-please.yml`](.github/workflows/release-please.yml) / starter 模板 [`workflow-templates/release-please.yml`](workflow-templates/release-please.yml)。
 
@@ -70,7 +86,7 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
    name: release-please
    on:
      push:
-       branches: [main]
+       branches: [main, test]
    permissions:
      contents: write
      issues: write
@@ -80,9 +96,11 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
        uses: nsfintech/.github/.github/workflows/release-please.yml@v1
        with:
          release-type: rust   # 按项目改：rust/node/python/go/java/simple；多包 workspace 省略此项并加 release-please-config.json
+         prerelease: ${{ github.ref_name == 'test' }}   # test 切 rc，main 切 stable
+         prerelease-type: rc
        secrets: inherit
    ```
-3. 之后推 `feat:`/`fix:` 到 main，release-please 会自动开 release PR；合并即发版。
+3. 推 `feat:`/`fix:` 到 test -> 合并 rc release PR 切 `vX.Y.Z-rc.N`；test 合并到 main -> 合并 stable release PR 切 `vX.Y.Z`。只想要 stable、不要 rc 通道的仓库，`branches: [main]` 并去掉 `prerelease` 两行即可。
 
 可配置项（`with:`）：
 
@@ -90,7 +108,13 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 | --- | --- | --- | --- |
 | `release-type` | string | - | `rust`/`node`/`python`/`go`/`java`/`simple` 等；省略则用仓库内 `release-please-config.json`（多包 workspace） |
 | `release-please-ref` | string | `main` | fork（`nsfintech/release-please`）的分支/commit/tag；默认 `main` 跟随最新，需要可复现时固定到 commit |
-| `token` | string | `GITHUB_TOKEN` | 默认调用方 token；若需 release PR 触发其它 workflow，传 PAT/App token |
+| `token` | string | `GITHUB_TOKEN` | 默认调用方 token；若需 release PR/tag 触发其它 workflow，传 PAT/App token |
+| `prerelease` | boolean | `false` | `true`=预发布模式，切 `vX.Y.Z-rc.N`（不前移 major tag、不写 `CHANGELOG.md`）；caller 按分支传，如 `${{ github.ref_name == 'test' }}` |
+| `prerelease-type` | string | `rc` | 预发布类型，生成 `vX.Y.Z-rc.N` |
+
+**输出**（供 caller 发版后处理用）：`release_created`（本次是否创建 release）、`tag_name`（如 `v1.1.0` 或 `v1.1.0-rc.3`）、`prerelease`（本次 release 是否预发布——caller 前移 major tag 等作业据此跳过 rc）。
+
+**多包 workspace 限制**：省略 `release-type`、用 `release-please-config.json` 的多包仓库，`prerelease`/`prerelease-type` 输入不生效（CLI 非 manifest 路径不走 input）；需在该 config 文件里配 `prerelease`/`prerelease-type`，但这是全局的（main 也会跟着 rc），故多包仓库暂不建议用 per-branch rc 通道。
 
 **Rust workspace**：单版本 workspace（如 gateway，`[workspace.package] version`）可直接 `release-type: rust`；多包独立版本则省略 `release-type`，在仓库加 `release-please-config.json` 描述各组件。
 
@@ -149,7 +173,7 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 
 ### docker-build-push：构建并推送 Docker 镜像
 
-构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。release-please 打 `v*` tag 时触发，打 `semver`/`sha`/`latest` 标签；也支持手动 `workflow_dispatch` 测试构建。
+构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。release-please 打 `v*` tag 时触发（含 stable `v1.2.3` 与预发布 `v1.2.3-rc.1`），打 `semver`/`sha`/`latest` 标签；也支持手动 `workflow_dispatch` 测试构建。
 
 **认证不走 GitHub secret**：nsfintech 是 Free 组织，私有仓库用不了 org 级 secrets；凭证（`DOCKER_REGISTRY`/`DOCKER_NAMESPACE`/`DOCKER_USERNAME`/`DOCKER_PASSWORD`）配在**自托管 runner 的 `.env`** 里，workflow 启动时桥接到 `$GITHUB_ENV`（并 `add-mask`）。`DOCKER_USERNAME`/`DOCKER_PASSWORD` 用 **TCR 服务级账号**（永不过期），不是 1h 临时登录指令。
 
@@ -158,8 +182,9 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | 触发 | 产出 tag |
 | --- | --- |
 | 所有 | `sha-<短sha>`（可追溯）|
-| `v*` tag（release-please 发版）| `v1.2.3` / `1.2.3` / `1.2` / `1`（semver）|
-| `v*` tag（非预发布）| `latest`（`flavor: latest=auto`，手动 dispatch / 预发布 tag 不打）|
+| `v*` stable tag（release-please 发版）| `v1.2.3` / `1.2.3` / `1.2` / `1`（semver）|
+| `v*` 预发布 tag（`v1.2.3-rc.1`）| `v1.2.3-rc.1` / `1.2.3-rc.1`（semver，**不打 `latest`**，适合测试环境）|
+| `v*` stable tag（非预发布）| `latest`（`flavor: latest=auto`，手动 dispatch / 预发布 tag 不打）|
 
 文件：可复用 workflow [`docker-build-push.yml`](.github/workflows/docker-build-push.yml) / starter 模板 [`workflow-templates/docker-build-push.yml`](workflow-templates/docker-build-push.yml)。
 
@@ -190,6 +215,8 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
    ```
 3. release-please 合并 release PR -> 自动打 `v*` tag -> 本 workflow 触发，构建并推送 `semver`/`sha`/`latest` 镜像。手动测试：Actions -> Run workflow（`push`=true 推 `sha` 测试镜像可拉取运行；`push`=false 只构建验证 Dockerfile）。
 
+**注意（tag 触发的坑）**：release-please 用默认 `GITHUB_TOKEN` 打的 tag **不会**触发本 stub 的 `on: push: tags`（`GITHUB_TOKEN` 推送不触发下游 workflow）。要让 stable/rc tag 自动构建镜像，需给 release-please 传 PAT/GitHub App token（见「权限」节）；否则用 `workflow_dispatch` 手动构建。
+
 可配置项（`with:`）：
 
 | 输入 | 类型 | 默认 | 说明 |
@@ -213,7 +240,7 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 
-注意：GITHUB_TOKEN 创建的 release PR 不会触发其它 workflow 的 `on: pull_request`；若需 release PR 跑 CI，传 PAT/App token。
+注意：GITHUB_TOKEN 创建的 release PR 不会触发其它 workflow 的 `on: pull_request`；同样，GITHUB_TOKEN 推的 tag 不会触发 `on: push: tags`（如 docker-build-push stub）。若需 release PR 跑 CI、或 tag 自动触发下游构建，传 PAT/App token。
 
 ## 版本管理
 
@@ -228,4 +255,4 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 ## 备注
 
 - 各仓库需自行 opt-in（GitHub 没有「自动注入所有仓库」的机制）。
-- 想保留 `release/*`、`hotfix/*` 等长期分支：传 `exclude-patterns`（branch-cleanup），或给它们加 branch protection（受保护分支会被自动跳过）。
+- 想保留 `release/*`、`hotfix/*`、`test` 等长期分支：传 `exclude-patterns`（branch-cleanup），或给它们加 branch protection（受保护分支会被自动跳过）。

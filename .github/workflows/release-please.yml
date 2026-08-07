@@ -1,24 +1,42 @@
 # 可复用 workflow：自动版本发布（release-please）
 #
-# 基于 Conventional Commits 自动管理版本：往 main 推 feat/fix 等提交后，release-please
+# 基于 Conventional Commits 自动管理版本：往目标分支推 feat/fix 等提交后，release-please
 # 会开/更新一个 release PR（含 CHANGELOG 与版本号 bump）；合并该 PR 即自动打 tag、发
 # GitHub release、改版本号文件（如 Cargo.toml）。
 #
 # 运行在调用方仓库上下文（GITHUB_REPOSITORY 为调用方），自动管理调用方的发布。
-# 暴露 outputs（release_created / tag_name）供调用方做发版后处理（如前移 major tag）。
-# 调用方 stub 见 workflow-templates/release-please.yml。
+# 暴露 outputs（release_created / tag_name / prerelease）供调用方做发版后处理（如前移
+# major tag 时跳过预发布）。调用方 stub 见 workflow-templates/release-please.yml。
 #
-# 与官方不同：本 workflow 不依赖 googleapis/release-please-action（其内置 release-please
-# 包，无法指向我们的 fork），而是直接 checkout 自建 fork（nsfintech/release-please）、
-# npm install + 编译后用其 CLI 跑 release-pr / github-release。这样调用方自动用上 fork
+# 与官方 googleapis/release-please-action 不同：本 workflow 不依赖该 action（其内置
+# release-please 包、无法指向我们的 fork），而是 checkout 自建 fork（nsfintech/release-please）、
+# npm install + 编译后，通过一个内联 JS driver 直接调其 JS API（Manifest.fromConfig /
+# createReleases / createPullRequests）——与官方 action 同款入口。这样调用方自动用上 fork
 # 里对 Rust workspace 共享版本（version.workspace = true）的修复。
+#
+# 为何用 JS driver 而非 CLI：release-please CLI 非 manifest 模式切不了预发布 tag——
+# `release-pr` 命令没有 `--prerelease` 布尔 flag，而 PrereleaseVersioningStrategy 的 bump
+# 模式由 prerelease===true 控制（CLI 不传则默认 false -> 走 graduation，把 rc 剥成 stable）。
+# 直接调 Manifest.fromConfig 才能按分支切 rc，且需要同时传 versioning:'prerelease'
+# （选 PrereleaseVersioningStrategy）+ prerelease:true（走 bump）+ prereleaseType；只传
+# prerelease:true 会被默认策略忽略、仍出 stable（dry-run 实测）。不需要 release-please-config.json
+# / .release-please-manifest.json，不污染调用方仓库。
+#
+# prerelease 模式（caller 传 prerelease:true，通常对应 test 分支）：
+#   - 切 vX.Y.Z-rc.N（release-please 自动递增 rc.1/rc.2），GH release 标为 prerelease
+#   - 跳过 CHANGELOG.md 文件写入（留 GH Release notes），避免与 main 的 CHANGELOG 冲突
+#   - 不前移 major tag、不打 docker latest（由 caller 的 update-major-tag / docker
+#     metadata-action 按 prerelease 输出 / semver 预发布识别各自过滤）
+#   - graduation 自动:依赖 fork(nsfintech/release-please)的改动--stable 模式找 baseline
+#     时跳过 prerelease tag,test 合并到 main 后 main 自动切 stable(rc.N -> X.Y.Z)。
+#     详见 README「graduation」。
 name: release-please (reusable)
 
 on:
   workflow_call:
     inputs:
       release-type:
-        description: 'release-please release type (rust/node/python/go/java/simple...)；多包独立版本的 workspace 省略此项，改用仓库内 release-please-config.json'
+        description: 'release-please release type (rust/node/python/go/java/simple...)；多包独立版本的 workspace 省略此项，改用仓库内 release-please-config.json（此时 prerelease 需在 config 文件里配，下方 prerelease 输入不生效）'
         type: string
         required: false
       release-please-ref:
@@ -27,16 +45,27 @@ on:
         required: false
         default: main
       token:
-        description: 'GitHub token，默认调用方 GITHUB_TOKEN；若需 release PR 触发其它 workflow，传 PAT/GitHub App token'
+        description: 'GitHub token，默认调用方 GITHUB_TOKEN；若需 release PR/tag 触发其它 workflow，传 PAT/GitHub App token'
         type: string
         required: false
+      prerelease:
+        description: 'true=预发布模式，切 vX.Y.Z-rc.N（不前移 @v1、不写 CHANGELOG.md）；默认 false=stable。caller 按分支传（test 分支传 true、main 传 false）'
+        type: boolean
+        default: false
+      prerelease-type:
+        description: '预发布类型，默认 rc（生成 vX.Y.Z-rc.N）'
+        type: string
+        default: 'rc'
     outputs:
       release_created:
         description: '本次运行是否创建了 release（"true" / "false"）'
         value: ${{ jobs.release-please.outputs.release_created }}
       tag_name:
-        description: '本次创建的 release tag（如 v1.1.0）；未发版则为空'
+        description: '本次创建的 release tag（如 v1.1.0 或 v1.1.0-rc.3）；未发版则为空'
         value: ${{ jobs.release-please.outputs.tag_name }}
+      prerelease:
+        description: '本次创建的 release 是否为预发布（"true" / "false"）；用于让 caller 的 major-tag 前移等作业跳过 rc'
+        value: ${{ jobs.release-please.outputs.prerelease }}
 
 jobs:
   release-please:
@@ -48,6 +77,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       # 调用方仓库本体（需要其 release-please-config.json / Cargo.toml 等），以及
       # 合并 release PR 后的 tag（github-release 打在该 merge commit 上，即本次 push 的 HEAD）。
@@ -72,40 +102,127 @@ jobs:
           npm install --no-audit --no-fund
           npm run compile
 
+      # 内联 JS driver：直接调 fork 的 JS API（与官方 action 同款），绕过 CLI 无法切 rc 的限制。
+      # 用引号定界符 <<'DRIVER' 关闭 shell 展开，driver 内的 JS 字符串原样落盘。
+      - name: Write release-please driver
+        run: |
+          cat > "$RUNNER_TEMP/rp-driver.js" <<'DRIVER'
+          const path = require('path');
+          // driver 写在 $RUNNER_TEMP，require 相对解析会找不到 fork；用 cwd（caller workspace 根）锚定。
+          const {GitHub, Manifest} = require(path.join(process.cwd(), 'release-please/build/src/index.js'));
+          const fs = require('fs');
+
+          function out(k, v) {
+            const f = process.env.GITHUB_OUTPUT;
+            if (f) fs.appendFileSync(f, k + '=' + v + '\n');
+          }
+
+          async function main() {
+            const [owner, repo] = String(process.env.GITHUB_REPOSITORY).split('/');
+            const targetBranch = process.env.TARGET_BRANCH;
+            const releaseType = process.env.RELEASE_TYPE || undefined;
+            const prerelease = process.env.PRERELEASE === 'true';
+            const prereleaseType = process.env.PRERELEASE_TYPE || undefined;
+            const dryRun = process.env.DRY_RUN === '1';
+            const cmd = process.env.CMD;
+
+            const github = await GitHub.create({
+              owner: owner,
+              repo: repo,
+              token: process.env.TOKEN,
+              apiUrl: 'https://api.github.com',
+              graphqlUrl: 'https://api.github.com',
+              defaultBranch: targetBranch,
+            });
+
+            let manifest;
+            if (releaseType) {
+              // 非 manifest 模式：靠 git tag 跟踪版本，不需要 release-please-config.json。
+              // 切 rc 必须同时设 versioning:'prerelease'(选 PrereleaseVersioningStrategy)
+              // + prerelease:true(走 bump 而非 graduation) + prereleaseType;只传 prerelease:true
+              // 会被默认策略忽略、仍出 stable(dry-run 实测确认)。
+              const releaserConfig = {
+                releaseType: releaseType,
+                prerelease: prerelease,
+                prereleaseType: prereleaseType,
+                draft: false,
+                includeComponentInTag: false,
+              };
+              if (prerelease) {
+                releaserConfig.versioning = 'prerelease';
+                // rc 跳过 CHANGELOG.md 文件写入(只留 GH Release notes),避免与 main 的
+                // CHANGELOG 冲突/污染。skipChangelog 只跳文件,release notes 照样生成。
+                releaserConfig.skipChangelog = true;
+              }
+              manifest = await Manifest.fromConfig(github, targetBranch, releaserConfig, {}, '.');
+            } else {
+              // 多包 workspace：读仓库内 release-please-config.json，prerelease 由该文件控制。
+              manifest = await Manifest.fromManifest(github, targetBranch,
+                'release-please-config.json', '.release-please-manifest.json', {});
+            }
+
+            if (cmd === 'github-release') {
+              const releases = dryRun
+                ? await manifest.buildReleases()
+                : (await manifest.createReleases()).filter(Boolean);
+              const tagOf = r => r.tagName || (r.tag && r.tag.toString()) || '';
+              // CreatedRelease 的 prerelease 字段在非 manifest 路径下不一定可靠,
+              // 按 tag 形状判定: vX.Y.Z-<pre> 即预发布(v1.1.0-rc / v1.1.0-rc.1)。
+              const preOf = r => /^v?[0-9]+\.[0-9]+\.[0-9]+-/.test(tagOf(r));
+              console.log('releases:', JSON.stringify(releases.map(r => ({
+                tag: tagOf(r), prerelease: preOf(r), path: r.path,
+              }))));
+              if (!dryRun) {
+                const root = releases[0];
+                if (root) {
+                  out('release_created', 'true');
+                  out('tag_name', tagOf(root));
+                  out('prerelease', String(preOf(root)));
+                } else {
+                  out('release_created', 'false');
+                }
+              }
+            } else if (cmd === 'release-pr') {
+              if (dryRun) {
+                const prs = await manifest.buildPullRequests();
+                for (const pr of prs) {
+                  console.log('pr:', JSON.stringify({
+                    title: (pr.title && pr.title.toString()) || pr.title,
+                    version: pr.version && pr.version.toString(),
+                  }));
+                }
+              } else {
+                const nums = await manifest.createPullRequests();
+                console.log('prs:', JSON.stringify(nums));
+              }
+            } else {
+              throw new Error('CMD must be github-release or release-pr, got: ' + cmd);
+            }
+          }
+
+          main().catch(e => {
+            console.error((e && e.stack) || e);
+            process.exit(1);
+          });
+          DRIVER
+
       - id: release
         name: Create GitHub release
-        run: |
-          set -euo pipefail
-          CLI=(node release-please/build/src/bin/release-please.js)
-          ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
-          if [ -n "$RELEASE_TYPE" ]; then
-            ARGS+=(--release-type "$RELEASE_TYPE")
-          fi
-          "${CLI[@]}" github-release "${ARGS[@]}"
-
-          # 检测本次是否打了 tag（release-please 为 release PR 的 merge commit 打 tag，
-          # 即本次 push 的 HEAD）。fetch 后按 semver 形状匹配。
-          git fetch --tags --force origin
-          TAG="$(git tag --points-at HEAD | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+($|-)' | head -1 || true)"
-          if [ -n "$TAG" ]; then
-            echo "release_created=true" >> "$GITHUB_OUTPUT"
-            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_created=false" >> "$GITHUB_OUTPUT"
-          fi
         env:
           TOKEN: ${{ inputs.token || secrets.GITHUB_TOKEN }}
           RELEASE_TYPE: ${{ inputs.release-type }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE_TYPE: ${{ inputs.prerelease-type }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+          CMD: github-release
+        run: node "$RUNNER_TEMP/rp-driver.js"
 
       - name: Create release PR
-        run: |
-          set -euo pipefail
-          CLI=(node release-please/build/src/bin/release-please.js)
-          ARGS=(--token "$TOKEN" --repo-url "$GITHUB_REPOSITORY")
-          if [ -n "$RELEASE_TYPE" ]; then
-            ARGS+=(--release-type "$RELEASE_TYPE")
-          fi
-          "${CLI[@]}" release-pr "${ARGS[@]}"
         env:
           TOKEN: ${{ inputs.token || secrets.GITHUB_TOKEN }}
           RELEASE_TYPE: ${{ inputs.release-type }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE_TYPE: ${{ inputs.prerelease-type }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+          CMD: release-pr
+        run: node "$RUNNER_TEMP/rp-driver.js"
