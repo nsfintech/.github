@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/nsfintech/.github/compare/v1.5.1...v1.6.0) (2026-08-07)
+
+
+### Features
+
+* **ci:** add optional build-command to docker-build-push reusable workflow ([#19](https://github.com/nsfintech/.github/issues/19)) ([c19a4e0](https://github.com/nsfintech/.github/commit/c19a4e0352de5513a0251e0781782fce734e564d))
+
 ## [1.5.1](https://github.com/nsfintech/.github/compare/v1.5.0...v1.5.1) (2026-08-07)
 
 
