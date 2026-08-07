@@ -18,6 +18,18 @@
 #
 # 认证不传 secrets:凭证来自自托管 runner 的 .env(服务级账号,永不过期),在可复用 workflow
 # 里读取。调用方需在仓库根提供 Dockerfile(默认 ./Dockerfile,路径不同用 file 输入)。
+#
+# 进阶:若想先在 runner 上编译(复用 cargo 缓存)再只打包运行镜像,用 build-command +
+# context 指向产物目录,例如:
+#   with:
+#     context: docker-stage
+#     file: docker-stage/Dockerfile
+#     build-command: |
+#       cargo build --release
+#       mkdir -p docker-stage
+#       cp target/release/<bin> docker-stage/
+#       cp config/gateway.yaml docker-stage/
+#     build-command-toolchain: '1.97'
 name: docker-build-push
 
 on:
