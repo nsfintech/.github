@@ -15,6 +15,12 @@
 #
 # 工作机制：推 Conventional Commits 到 main/test -> release-please 按 prerelease 输入
 # 切 rc 或 stable。test 分支需在 branch-cleanup 里 exclude-patterns 排除（长期分支）。
+#
+# 认证：caller 无需配 token/secret。可复用 workflow 自动从自托管 runner .env 读 GitHub App
+# 凭证换 installation token 开 PR / 推 tag（App 是可信协作者 -> release PR 触发的
+# pull_request workflow 如 rust-ci 不被 action_required 审批门禁挡；App 推的 tag 也触发下游
+# on: push: tags workflow 如 docker-build-push）。App 的创建/安装/凭证见
+# nsfintech/.github README「App token（GitHub App 认证）」。
 name: release-please
 
 on:
