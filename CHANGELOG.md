@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/nsfintech/.github/compare/v1.5.0...v1.5.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **ci:** read App private key from a PEM file on the runner, not base64 in .env ([#17](https://github.com/nsfintech/.github/issues/17)) ([238585c](https://github.com/nsfintech/.github/commit/238585cf513ea00cd630fc801951c42e61baf57b))
+
 ## [1.5.0](https://github.com/nsfintech/.github/compare/v1.4.0...v1.5.0) (2026-08-07)
 
 
