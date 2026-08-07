@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/nsfintech/.github/compare/v1.4.0...v1.5.0) (2026-08-07)
+
+
+### Features
+
+* **ci:** use GitHub App token for release-please ([#15](https://github.com/nsfintech/.github/issues/15)) ([b228f91](https://github.com/nsfintech/.github/commit/b228f91a7f842b401addb413ce2b501a82f5d9b3))
+
 ## [1.4.0](https://github.com/nsfintech/.github/compare/v1.3.1...v1.4.0) (2026-08-07)
 
 
