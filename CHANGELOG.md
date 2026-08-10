@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/nsfintech/.github/compare/v1.6.0...v1.7.0) (2026-08-10)
+
+
+### Features
+
+* **ci:** add deploy-tke reusable workflow ([#21](https://github.com/nsfintech/.github/issues/21)) ([e5bba23](https://github.com/nsfintech/.github/commit/e5bba2375f8d8e9a92393ae86da9ad1d8804315d))
+
 ## [1.6.0](https://github.com/nsfintech/.github/compare/v1.5.1...v1.6.0) (2026-08-07)
 
 
