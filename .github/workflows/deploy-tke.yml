@@ -203,5 +203,8 @@ jobs:
           export IMAGE="${{ inputs.image }}"
           echo "部署镜像: ${IMAGE}"
           # shellcheck disable=SC2016  # envsubst 的 ${IMAGE} 必须单引号原样传入,不能 shell 展开
+          # -n 强制落到目标 namespace:清单未写 metadata.namespace 时(kubectl 默认会落到
+          # context 的 default),会与 regcred 所在 namespace 不一致导致拉取 401。
           kubectl kustomize . | envsubst '${IMAGE}' | kubectl apply -f - \
+            -n "${{ inputs.namespace }}" \
             --wait=true --timeout="${{ inputs.timeout }}"
