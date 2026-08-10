@@ -1,0 +1,68 @@
+# starter 模板:release-please 打 v* tag 后 → docker-build-push 构建推送 →
+# deploy-tke 拿完整镜像地址部署到腾讯云 TKE。首次部署时集群里没有该服务也没关系:
+# deploy-tke 会把调用方仓库里 kustomize 清单(注入 ${IMAGE})全量 apply,Namespace/
+# Deployment/Service/ConfigMap/Secret 等一次全部就位。
+#
+# 调用方需在仓库提供 kustomization 清单(默认目录 ./deploy,可用 manifests 输入改):
+#   - Deployment 的 image 字段写占位 ${IMAGE},例如:
+#       image: ${IMAGE}
+#   - Deployment 引用 imagePullSecrets(默认 regcred):
+#       imagePullSecrets:
+#         - name: regcred
+#
+# 触发时机:
+#   - push v* tag(release-please 合并 release PR 后自动打 tag -> 触发):构建 + 推送 +
+#     部署,deploy 的 if 直接通过。
+#   - workflow_dispatch(手动):push 控制是否推镜像,deploy 控制是否部署(false 防误部署)。
+#
+# 注意:release-please 用默认 GITHUB_TOKEN 打的 tag 不会触发本 stub 的 on: push: tags
+# (GITHUB_TOKEN 推送不触发下游 workflow)。要让 rc/stable tag 自动构建+部署,需给
+# release-please 传 PAT/GitHub App token(见 nsfintech/.github README);否则用 workflow_dispatch 手动跑。
+#
+# 凭证不走 secrets:腾讯云 API 凭证(TKE_SECRET_ID/KEY,TKE 专用)与 TCR 凭证(DOCKER_*,
+# 用于自动确保 imagePullSecret)都放自托管 runner .env,在可复用 workflow 里读取。
+#
+# rc/stable 分环境:默认所有 v* tag 都部署到下方 cluster-id。想 rc→测试、stable→生产,
+# 复制一份 deploy job,一个带 if: contains(github.ref_name, '-rc'),一个带
+# if: !contains(...),分别指不同 cluster-id(测试/生产各一个 TKE 集群)。
+name: build-and-deploy-tke
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '推送镜像到 TCR(false 则只构建,用于测试 Dockerfile)'
+        type: boolean
+        default: true
+      deploy:
+        description: '推完是否部署到 TKE(false 防误部署)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: nsfintech/.github/.github/workflows/docker-build-push.yml@v1
+    with:
+      push: ${{ github.event_name == 'push' || inputs.push }}
+
+  deploy:
+    needs: build
+    if: ${{ github.event_name == 'push' || inputs.deploy }}
+    uses: nsfintech/.github/.github/workflows/deploy-tke.yml@v1
+    with:
+      image: ${{ needs.build.outputs.image }}
+      cluster-id: cls-xxxxxxxx   # ← 改成目标集群 ID
+      region: ap-guangzhou       # ← 集群所在地域
+      namespace: default         # ← 目标命名空间
+      manifests: deploy          # ← kustomization 目录(仓库里存 kustomization.yaml 的目录)
+      # image-pull-secret: regcred   # 默认 regcred;需与 deployment.yaml 的 imagePullSecrets 一致
+    # 无需 secrets: inherit -- 凭证来自 runner .env

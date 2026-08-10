@@ -1,0 +1,4 @@
+{
+  "name": "Build & deploy to TKE",
+  "description": "release-please 打 v* tag 后自动构建并推送 Docker 镜像(docker-build-push),再把完整镜像地址部署到腾讯云 TKE 集群(DescribeClusterKubeconfig 动态取 kubeconfig + kustomize 渲染 + kubectl apply 全套清单,含首次空集群)。凭证来自自托管 runner .env(TENCENTCLOUD_*/DOCKER_*)。需在仓库提供 kustomization 清单、Deployment image 字段写 ${IMAGE}。"
+}

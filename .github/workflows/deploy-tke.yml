@@ -1,0 +1,207 @@
+# 可复用 workflow:把已构建的镜像部署到腾讯云 TKE 集群。
+#
+# 上游(如 docker-build-push)通过 workflow_call.outputs.image 把完整镜像地址喂进来,
+# 本 workflow 拿它去更新目标服务。首次部署时集群里可能完全没有该服务——所以不是
+# kubectl set image,而是把调用方仓库里的全套清单(kustomize 渲染 + ${IMAGE} 注入)
+# 一次 kubectl apply --wait,Namespace/Deployment/Service/ConfigMap/Secret 等全部就位。
+#
+# 认证来自自托管 runner 的 .env(与 docker-build-push / release-please 同一套思路,
+# Free 组织私有仓库用不了 org 级 secrets):
+#   - TKE_SECRET_ID / TKE_SECRET_KEY:腾讯云 API 凭证(TKE 专用语义名),必填。
+#     workflow 内桥接到 TENCENTCLOUD_SECRET_ID/KEY(tccli 默认读的标准名)供 tccli 认证。
+#     用 tccli tke DescribeClusterKubeconfig 动态换取 kubeconfig(子账号专属 x509 客户端
+#     证书,20 年有效;集群 owner/主账号默认 cluster-admin)。不用把 kubeconfig 烘焙进仓库。
+#   - DOCKER_REGISTRY / DOCKER_NAMESPACE / DOCKER_USERNAME / DOCKER_PASSWORD:可选,
+#     复用于 docker-build-push 的服务级账号,自动确保 imagePullSecret 存在,首次空集群才能
+#     拉 TCR 私有镜像。
+#   - TKE_<ENV>_CLUSTER_ID / TKE_<ENV>_REGION:目标集群配置,按环境名(ENV 大写,如 TEST/PROD)。
+#     caller 传 environment=test 时读 TKE_TEST_CLUSTER_ID / TKE_TEST_REGION。集群 ID 不硬编码
+#     进仓库,各环境在 runner .env 集中管理;也可直接传 cluster-id/region 输入覆盖(优先)。
+# runner .env 变量只在 run 步骤的 shell 可用,所以第一步先桥接到 $GITHUB_ENV(并 add-mask)。
+#
+# 镜像注入:调用方清单的 Deployment image 字段写占位 ${IMAGE},本 workflow 用
+# kustomize build 渲染后 envsubst 只替换 ${IMAGE}(不动清单里其它 $ 变量),再全量 apply。
+name: deploy-tke (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: '要部署的镜像完整地址 registry/namespace/name:tag,来自 needs.<build>.outputs.image'
+        type: string
+      environment:
+        description: '集群环境名(test/prod 等);从 runner env TKE_<ENV>_CLUSTER_ID / TKE_<ENV>_REGION 读集群。与 cluster-id/region 二选一(后者优先)'
+        type: string
+        default: ''
+      cluster-id:
+        description: 'TKE 集群 ID(cls-xxxxxxxx),显式指定;不填则用 environment 从 runner env 派生'
+        type: string
+        default: ''
+      region:
+        description: '集群地域,显式指定;不填则用 environment 从 runner env 派生'
+        type: string
+        default: ''
+      namespace:
+        description: '目标命名空间;确保存在(无则创建)。资源实际落点由清单决定'
+        type: string
+        default: default
+      manifests:
+        description: '调用方仓库内 kustomization 根目录(清单所在),默认 ./deploy'
+        type: string
+        default: deploy
+      image-pull-secret:
+        description: 'TCR 拉取凭证 Secret 名;runner .env 有 DOCKER_* 时自动确保存在'
+        type: string
+        default: regcred
+      extranet:
+        description: 'true 用公网 kubeconfig(需集群开公网访问);默认 false 内网(自托管 runner 需在集群 VPC 内)'
+        type: boolean
+        default: false
+      timeout:
+        description: 'kubectl apply --wait 超时'
+        type: string
+        default: 5m
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner .env -> $GITHUB_ENV 桥接。TKE_SECRET_*(TKE 专用语义名)必填,桥接成
+      # TENCENTCLOUD_SECRET_ID/KEY(tccli 默认读的标准名)供 tccli 认证;DOCKER_* 可选(建 regcred)。
+      - name: 从 runner env 载入凭证(TKE + DOCKER,桥接 GITHUB_ENV + 脱敏)
+        run: |
+          for v in TKE_SECRET_ID TKE_SECRET_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::runner env 缺少 $v(检查自托管 runner .env 是否就位、是否已重启加载)"
+              exit 1
+            fi
+          done
+          echo "::add-mask::$TKE_SECRET_ID"
+          echo "::add-mask::$TKE_SECRET_KEY"
+          {
+            echo "TENCENTCLOUD_SECRET_ID=$TKE_SECRET_ID"
+            echo "TENCENTCLOUD_SECRET_KEY=$TKE_SECRET_KEY"
+          } >> "$GITHUB_ENV"
+          for v in DOCKER_REGISTRY DOCKER_NAMESPACE DOCKER_USERNAME DOCKER_PASSWORD; do
+            if [ -n "${!v}" ]; then
+              echo "::add-mask::${!v}"
+              echo "$v=${!v}" >> "$GITHUB_ENV"
+            fi
+          done
+          # 确定目标集群:cluster-id/region 输入优先,否则从 environment 派生 runner env
+          # TKE_<ENV>_CLUSTER_ID / TKE_<ENV>_REGION(ENV 大写)。集群 ID 不硬编码进仓库,
+          # 各环境(test/prod)在 runner .env 集中管理,workflow 只引用环境名。
+          ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]')
+          if [ -n "${{ inputs.cluster-id }}" ]; then
+            CLUSTER_ID="${{ inputs.cluster-id }}"
+          else
+            if [ -z "$ENV_UPPER" ]; then
+              echo "::error::未传 cluster-id 也未传 environment,无法确定目标集群"
+              exit 1
+            fi
+            cid_var="TKE_${ENV_UPPER}_CLUSTER_ID"
+            CLUSTER_ID="${!cid_var}"
+            [ -z "$CLUSTER_ID" ] && { echo "::error::runner env 缺少 $cid_var(在 runner .env 配 TKE_${ENV_UPPER}_CLUSTER_ID,或改传 cluster-id)"; exit 1; }
+          fi
+          if [ -n "${{ inputs.region }}" ]; then
+            REGION="${{ inputs.region }}"
+          else
+            reg_var="TKE_${ENV_UPPER}_REGION"
+            REGION="${!reg_var}"
+            [ -z "$REGION" ] && { echo "::error::runner env 缺少 $reg_var(在 runner .env 配 TKE_${ENV_UPPER}_REGION,或改传 region)"; exit 1; }
+          fi
+          echo "::add-mask::$CLUSTER_ID"
+          echo "CLUSTER_ID=$CLUSTER_ID" >> "$GITHUB_ENV"
+          echo "REGION=$REGION" >> "$GITHUB_ENV"
+          echo "目标集群: ${{ inputs.environment || inputs.cluster-id }} -> $CLUSTER_ID ($REGION)"
+
+      - name: 检查工具(kubectl/jq/envsubst 须在 runner 预装)
+        run: |
+          missing=()
+          for cmd in kubectl jq envsubst; do
+            if command -v "$cmd" >/dev/null 2>&1; then
+              echo "✓ $cmd -> $(command -v "$cmd")"
+            else
+              missing+=("$cmd")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::runner 缺少工具: ${missing[*]}"
+            echo "这些工具须在 self-hosted runner 上一次性预装(runner 是持久环境,不每次装,且 sudo 在 CI 非交互会话里要密码会挂):"
+            echo "  kubectl:     curl -sSLo /root/kubectl \"https://dl.k8s.io/release/\$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\" && sudo install -m 755 /root/kubectl /usr/local/bin/kubectl"
+            echo "  jq envsubst: dnf install -y jq gettext  (RHEL 系,envsubst 在 gettext 包;debian 系用 apt-get install -y jq gettext-base)"
+            echo "  (kustomize 不用单独装,用 kubectl kustomize 内置子命令;tccli 由 pip --user 装,见下)"
+            exit 1
+          fi
+
+      # tccli 用系统 python --user 装到 runner 用户目录(~/.local,runner 可写,不需 sudo)。
+      # setup-python tool cache 用不了:actions/python-versions 的预构建 Python 只支持
+      # ubuntu/macos/windows,不认 TencentOS(self-hosted)这个 OS。
+      - name: 装 tccli(系统 python --user)
+        run: |
+          python3 -m pip install --user --upgrade tccli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: 获取 TKE kubeconfig(DescribeClusterKubeconfig)
+        run: |
+          args=(--cli-unfold-argument --region "${REGION}" --ClusterId "${CLUSTER_ID}")
+          if [ "${{ inputs.extranet }}" = "true" ]; then
+            args+=(--IsExtranet true)
+          fi
+          tccli tke DescribeClusterKubeconfig "${args[@]}" \
+            --output json > "${{ runner.temp }}/kubeconfig_raw.json" || {
+              echo "::error::tccli 调用失败"
+              cat "${{ runner.temp }}/kubeconfig_raw.json"
+              exit 1
+            }
+          # tccli 实际返回顶层 {Kubeconfig: ...}(与文档的 {Response:{Kubeconfig:...}} 不一致),兼容两种。
+          jq -r '.Kubeconfig // .Response.Kubeconfig // empty' "${{ runner.temp }}/kubeconfig_raw.json" \
+            > "${{ runner.temp }}/kubeconfig.yaml"
+          if [ ! -s "${{ runner.temp }}/kubeconfig.yaml" ]; then
+            echo "::error::未从 tccli 输出提取到 Kubeconfig"
+            exit 1
+          fi
+          # add-mask 只 mask 证书字段值(base64),不 mask server 域名,方便排查网络。
+          for field in certificate-authority-data client-certificate-data client-key-data; do
+            val=$(grep -oE "${field}: [^ ]+" "${{ runner.temp }}/kubeconfig.yaml" | head -1 | sed -E "s/${field}: //")
+            [ -n "$val" ] && echo "::add-mask::$val"
+          done
+          echo "kubeconfig 已写入 ${{ runner.temp }}/kubeconfig.yaml"
+
+      - name: 确保命名空间存在(首次部署无则创建,幂等)
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig.yaml
+        run: |
+          kubectl create namespace "${{ inputs.namespace }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: 确保 imagePullSecret 存在(仅 DOCKER_* 已配时)
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig.yaml
+        run: |
+          if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
+            kubectl create secret docker-registry "${{ inputs.image-pull-secret }}" \
+              --docker-server="${DOCKER_REGISTRY}" \
+              --docker-username="${DOCKER_USERNAME}" \
+              --docker-password="${DOCKER_PASSWORD}" \
+              -n "${{ inputs.namespace }}" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          else
+            echo "::warning::runner .env 未配置 DOCKER_*,跳过 imagePullSecret 确保;请保证集群内已有 Secret ${{ inputs.image-pull-secret }}"
+          fi
+
+      - name: 渲染清单(注入 ${IMAGE})并全量 apply
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig.yaml
+        run: |
+          cd "${{ inputs.manifests }}"
+          export IMAGE="${{ inputs.image }}"
+          echo "部署镜像: ${IMAGE}"
+          # shellcheck disable=SC2016  # envsubst 的 ${IMAGE} 必须单引号原样传入,不能 shell 展开
+          kubectl kustomize . | envsubst '${IMAGE}' | kubectl apply -f - \
+            --wait=true --timeout="${{ inputs.timeout }}"
