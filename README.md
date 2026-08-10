@@ -150,7 +150,6 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 持久/初始配置，或 0.x 的 bump 策略（`bump-minor-pre-major` 等），可在仓库内 `release-please-config.json` 设置（此时 caller stub 省略 `release-type`）。
 
 ### rust-ci：Rust 质量门禁
-
 对 Rust 项目跑统一质量门禁：`cargo fmt --check` + `cargo clippy -D warnings` + `cargo deny check`（供应链审计：漏洞 / 许可证 / 禁用 crate / 来源）。三个 job 并行，只读权限，无需 PAT。
 
 **不含测试**——测试模式因项目而异（单 crate / workspace / nextest / e2e 需外部服务），后续单独做测试模板；需要测试的仓库自行加 job。
@@ -254,11 +253,115 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | `build-command-toolchain` | string | `stable` | `build-command` 用的 Rust toolchain（默认 `stable`）；仅 `build-command` 非空时生效 |
 | `provenance` | boolean | `false` | OCI provenance attestation（TCR 默认关）|
 
+**输出**（供下游消费）：`image` —— 本次构建推送的主镜像完整地址 `registry/namespace/name:tag`。tag 规则：push tag 事件=`github.ref_name`（如 `v1.2.3` / `v1.2.3-rc.1`），`workflow_dispatch`=`sha-<短sha>`。下游（如 deploy-tke）用 `needs.<build>.outputs.image` 拿到。
+
 **缓存**：默认 `type=registry,mode=max`（缓存存 TCR `<image>:buildcache` tag，mode=max 含多阶段中间层；无 10G/7天 限制，不依赖 GitHub cache 服务）。self-hosted runner 上 `type=gha` 易因 GitHub cache 服务 400 报错导致构建失败，故默认走 registry；可选 `gha`（GitHub-hosted runner 适用）或 `none`（关缓存）。
+
+### deploy-tke：构建后自动部署到 TKE
+
+构建完镜像后，把完整镜像地址自动部署到腾讯云 TKE 集群。与 docker-build-push 串成一条链：release-please 打 `v*` tag → 构建推送 → 拿 `outputs.image` → 部署。
+
+**关键是覆盖首次部署**：集群里可能完全没有该服务，所以不是 `kubectl set image`，而是把调用方仓库里的**全套清单**（kustomize 渲染 + `${IMAGE}` 注入）一次 `kubectl apply --wait`，Namespace/Deployment/Service/ConfigMap/Secret 等全部就位。
+
+文件：可复用 workflow [`deploy-tke.yml`](.github/workflows/deploy-tke.yml) / starter 模板 [`workflow-templates/deploy-tke.yml`](workflow-templates/deploy-tke.yml)。
+
+**前提**（自托管 runner `.env`，与 docker-build-push 同一套思路，Free 组织私有仓库用不了 org 级 secrets）：
+
+- 必填：`TKE_SECRET_ID` / `TKE_SECRET_KEY`（腾讯云 API 凭证，TKE 专用；workflow 内桥接到 `TENCENTCLOUD_SECRET_ID/KEY` 供 tccli 认证。改完重启 runner 加载）。
+- 可选：`DOCKER_REGISTRY` / `DOCKER_NAMESPACE` / `DOCKER_USERNAME` / `DOCKER_PASSWORD`（复用于 docker-build-push 的服务级账号，用于自动确保 `imagePullSecret`）。
+- 腾讯云账号需为集群 owner，或已给 TKE RBAC 授权的子账号（取 kubeconfig 后才有权限 apply）。
+- 默认走**内网** kubeconfig：自托管 runner 需与集群在同一 VPC / 已打通内网；跨公网连需集群开公网访问并传 `extranet: true`。
+
+**清单契约**（调用方服务仓库需满足）：
+
+1. 仓库有 kustomization 目录（默认 `deploy/`，含 `kustomization.yaml` 与 Deployment/Service 等）。
+2. Deployment 的 `image` 字段写占位 `image: ${IMAGE}`（envsubst 只认 `${IMAGE}` 这种形式）。
+3. Deployment 引用 `imagePullSecrets`，名字与模板 `image-pull-secret` 输入一致（默认 `regcred`）。
+
+**如何使用**（某仓库）：
+
+1. 满足上面「清单契约」，把部署清单放进 `deploy/`（或改 `manifests` 输入指向其它目录）。
+2. 加 caller stub：Actions -> New workflow -> 搜 "Build & deploy to TKE" -> 采用；或手动新建 `.github/workflows/build-and-deploy-tke.yml`：
+   ```yaml
+   name: build-and-deploy-tke
+   on:
+     push:
+       tags: ['v*']
+     workflow_dispatch:
+       inputs:
+         push:
+           description: '推送镜像到 TCR(false 则只构建)'
+           type: boolean
+           default: true
+         deploy:
+           description: '推完是否部署到 TKE(false 防误部署)'
+           type: boolean
+           default: false
+   concurrency:
+     group: deploy-${{ github.ref }}
+     cancel-in-progress: false
+   permissions:
+     contents: read
+   jobs:
+     build:
+       uses: nsfintech/.github/.github/workflows/docker-build-push.yml@v1
+       with:
+         push: ${{ github.event_name == 'push' || inputs.push }}
+     deploy:
+       needs: build
+       if: ${{ github.event_name == 'push' || inputs.deploy }}
+       uses: nsfintech/.github/.github/workflows/deploy-tke.yml@v1
+       with:
+         image: ${{ needs.build.outputs.image }}
+         cluster-id: cls-xxxxxxxx   # 改成目标集群 ID
+         region: ap-guangzhou       # 集群所在地域
+         namespace: default
+         manifests: deploy
+   ```
+3. release-please 合并 release PR -> 自动打 `v*` tag -> 构建推送 + 部署。手动测试：Actions -> Run workflow（`deploy`=true 才部署）。
+
+**rc/stable 分环境**：默认所有 `v*` tag 部署到同一个 cluster-id。想 rc→测试、stable→生产（各一个 TKE 集群），复制 deploy job：
+
+```yaml
+  deploy-test:
+    needs: build
+    if: ${{ contains(github.ref_name, '-rc') }}
+    uses: nsfintech/.github/.github/workflows/deploy-tke.yml@v1
+    with:
+      image: ${{ needs.build.outputs.image }}
+      cluster-id: cls-test    # 测试集群
+      namespace: default
+      manifests: deploy
+
+  deploy-prod:
+    needs: build
+    if: ${{ !contains(github.ref_name, '-rc') }}
+    uses: nsfintech/.github/.github/workflows/deploy-tke.yml@v1
+    with:
+      image: ${{ needs.build.outputs.image }}
+      cluster-id: cls-prod    # 生产集群
+      namespace: default
+      manifests: deploy
+```
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `image` | string | - | 要部署的镜像完整地址（来自 `needs.<build>.outputs.image`） |
+| `cluster-id` | string | - | TKE 集群 ID（形如 `cls-xxxxxxxx`），`DescribeClusterKubeconfig` 按此取 kubeconfig |
+| `region` | string | `ap-guangzhou` | 集群所在地域 |
+| `namespace` | string | `default` | 目标命名空间；确保存在（无则创建）。资源实际落点由清单决定 |
+| `manifests` | string | `deploy` | 调用方仓库内 kustomization 根目录 |
+| `image-pull-secret` | string | `regcred` | TCR 拉取凭证 Secret 名；runner `.env` 有 `DOCKER_*` 时自动确保存在 |
+| `extranet` | boolean | `false` | `true` 用公网 kubeconfig（需集群开公网访问）；默认内网（runner 需在集群 VPC 内） |
+| `timeout` | string | `5m` | `kubectl apply --wait` 超时 |
+
+**注意（tag 触发的坑）**：与 docker-build-push 相同——release-please 用默认 `GITHUB_TOKEN` 打的 tag 不会触发本 stub 的 `on: push: tags`。需给 release-please 传 PAT/App token（见「权限」节）；否则用 `workflow_dispatch` 手动构建+部署。
 
 ## 权限
 
-四个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci 与 docker-build-push 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR 用 runner `.env` 里的服务级账号凭证，不需要 GitHub secret 或 `packages: write`。**
+五个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、docker-build-push 与 deploy-tke 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

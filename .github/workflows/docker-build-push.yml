@@ -66,12 +66,18 @@ on:
         description: '是否生成 OCI provenance attestation(TCR 兼容性未知,默认关)'
         type: boolean
         default: false
+    outputs:
+      image:
+        description: '本次构建推送的主镜像完整地址 registry/namespace/name:tag。tag 规则:push tag 事件=github.ref_name(如 v1.2.3/v1.2.3-rc.1),workflow_dispatch=sha-<短sha>。供下游(如 deploy-tke)消费'
+        value: ${{ jobs.build-push.outputs.image }}
 
 permissions:
   contents: read
 
 jobs:
   build-push:
+    outputs:
+      image: ${{ steps.emit.outputs.image }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
@@ -108,6 +114,18 @@ jobs:
             echo "DOCKER_USERNAME=$DOCKER_USERNAME"
             echo "DOCKER_PASSWORD=$DOCKER_PASSWORD"
           } >> "$GITHUB_ENV"
+
+      # 输出本次推送的主镜像完整地址给下游(如 deploy-tke)。tag 与 metadata-action 保持一致:
+      # push tag 事件=github.ref_name(v1.2.3 / v1.2.3-rc.1),workflow_dispatch=sha-<短sha>。
+      - name: 输出镜像完整地址
+        id: emit
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="sha-${GITHUB_SHA:0:7}"   # 与 metadata-action type=sha,format=short 一致
+          fi
+          echo "image=${DOCKER_REGISTRY}/${DOCKER_NAMESPACE}/${{ inputs.image-name }}:${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
 
