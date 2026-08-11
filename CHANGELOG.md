@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/nsfintech/.github/compare/v1.7.0...v1.7.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **ci:** add create-only mode to deploy-tke to skip existing resources ([#23](https://github.com/nsfintech/.github/issues/23)) ([66a0f08](https://github.com/nsfintech/.github/commit/66a0f081f7c9ea8183b69f4842df2837f01666dc))
+
 ## [1.7.0](https://github.com/nsfintech/.github/compare/v1.6.0...v1.7.0) (2026-08-10)
 
 
