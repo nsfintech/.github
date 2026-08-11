@@ -3,6 +3,11 @@
 # deploy-tke 会把调用方仓库里 kustomize 清单(注入 ${IMAGE})全量 apply,Namespace/
 # Deployment/Service/ConfigMap/Secret 等一次全部就位。
 #
+# create-only(可选):有些资源(如 ConfigMap/Secret 初始化配置)不希望每次部署被覆盖。
+# 两种标记方式(取并集):传 create-only-kinds: ConfigMap,Secret(按 kind 批量),或在单个
+# 资源 metadata.annotations 加 deploy-tke.nsfintech.io/create-only: "true"(精确到资源)。
+# 标记的资源只在集群中不存在时才 apply,已存在则跳过;其余资源照常全量 apply。
+#
 # 调用方需在仓库提供 kustomization 清单(默认目录 ./deploy,可用 manifests 输入改):
 #   - Deployment 的 image 字段写占位 ${IMAGE},例如:
 #       image: ${IMAGE}
@@ -65,4 +70,5 @@ jobs:
       namespace: default         # ← 目标命名空间
       manifests: deploy          # ← kustomization 目录(仓库里存 kustomization.yaml 的目录)
       # image-pull-secret: regcred   # 默认 regcred;需与 deployment.yaml 的 imagePullSecrets 一致
+      # create-only-kinds: ConfigMap,Secret  # 可选:这些 kind 只在不存在时创建,已存在跳过(不覆盖手动改动);也可在单个资源上加 annotation deploy-tke.nsfintech.io/create-only: "true"
     # 无需 secrets: inherit -- 凭证来自 runner .env

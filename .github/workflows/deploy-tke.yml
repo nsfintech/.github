@@ -21,6 +21,16 @@
 #
 # 镜像注入:调用方清单的 Deployment image 字段写占位 ${IMAGE},本 workflow 用
 # kustomize build 渲染后 envsubst 只替换 ${IMAGE}(不动清单里其它 $ 变量),再全量 apply。
+#
+# create-only(仅首次创建,已存在则跳过不覆盖):有些资源(典型 ConfigMap/Secret 这类初始化
+# 配置)部署后可能被运维手动调整,不该被流水线每次 apply 覆盖。渲染后按标记分流--普通资源
+# 照常 kubectl apply --wait(声明式同步);create-only 资源逐个 kubectl get 判断,集群中不存在
+# 才 apply,已存在则跳过。两种标记方式(取并集):
+#   1) 资源 metadata.annotations['deploy-tke.nsfintech.io/create-only']='true' -- 精确到单个资源;
+#   2) workflow 输入 create-only-kinds='ConfigMap,Secret' -- 该 kind 全部资源视为 create-only。
+# 分流用 yq(把 kustomize 的 YAML 多文档转 JSON Lines) + jq(按 annotation/kind 筛选,kinds 走
+# --argjson 无注入风险);yq 由 step-security/setup-yq@v1 装(pin yq-version 到 v4.x,setup-yq
+# 默认 v3 语法不兼容),不依赖 runner 预装。
 name: deploy-tke (reusable)
 
 on:
@@ -58,9 +68,13 @@ on:
         type: boolean
         default: false
       timeout:
-        description: 'kubectl apply --wait 超时'
+        description: 'kubectl apply --wait 超时(仅普通资源)'
         type: string
         default: 5m
+      create-only-kinds:
+        description: '仅首次创建、已存在则跳过不覆盖的资源类型(逗号分隔,如 ConfigMap,Secret);该 kind 的资源只在集群中不存在时才 apply。也可不传,改在单个资源上加 annotation deploy-tke.nsfintech.io/create-only: "true" 标记(两者取并集)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -70,6 +84,14 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
+
+      # 装 yq(v4) 用于清单分流:create-only 资源按 annotation/kind 筛选需把 kustomize 的
+      # YAML 多文档转 JSON Lines。step-security/setup-yq 默认装 v3.3.2(子命令式语法,与 v4 的
+      # eval/eval-all 完全不兼容),必须 pin yq-version 到 v4.x。带缓存,self-hosted runner
+      # 持久 tool cache 命中后近乎即时。version 带 v 前缀(mikefarah/yq 的 release tag 形如 v4.53.3)。
+      - uses: step-security/setup-yq@v1
+        with:
+          yq-version: 'v4.53.3'
 
       # runner .env -> $GITHUB_ENV 桥接。TKE_SECRET_*(TKE 专用语义名)必填,桥接成
       # TENCENTCLOUD_SECRET_ID/KEY(tccli 默认读的标准名)供 tccli 认证;DOCKER_* 可选(建 regcred)。
@@ -120,7 +142,7 @@ jobs:
           echo "REGION=$REGION" >> "$GITHUB_ENV"
           echo "目标集群: ${{ inputs.environment || inputs.cluster-id }} -> $CLUSTER_ID ($REGION)"
 
-      - name: 检查工具(kubectl/jq/envsubst 须在 runner 预装)
+      - name: 检查工具(kubectl/jq/envsubst 须在 runner 预装;yq 由上一步 setup-yq 装)
         run: |
           missing=()
           for cmd in kubectl jq envsubst; do
@@ -135,7 +157,7 @@ jobs:
             echo "这些工具须在 self-hosted runner 上一次性预装(runner 是持久环境,不每次装,且 sudo 在 CI 非交互会话里要密码会挂):"
             echo "  kubectl:     curl -sSLo /root/kubectl \"https://dl.k8s.io/release/\$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\" && sudo install -m 755 /root/kubectl /usr/local/bin/kubectl"
             echo "  jq envsubst: dnf install -y jq gettext  (RHEL 系,envsubst 在 gettext 包;debian 系用 apt-get install -y jq gettext-base)"
-            echo "  (kustomize 不用单独装,用 kubectl kustomize 内置子命令;tccli 由 pip --user 装,见下)"
+            echo "  (kustomize 不用单独装,用 kubectl kustomize 内置子命令;yq 由 step-security/setup-yq 自动装,无需预装;tccli 由 pip --user 装,见下)"
             exit 1
           fi
 
@@ -195,16 +217,62 @@ jobs:
             echo "::warning::runner .env 未配置 DOCKER_*,跳过 imagePullSecret 确保;请保证集群内已有 Secret ${{ inputs.image-pull-secret }}"
           fi
 
-      - name: 渲染清单(注入 ${IMAGE})并全量 apply
+      - name: 渲染清单(注入 ${IMAGE})并 apply(普通资源全量,create-only 仅首次创建)
         env:
           KUBECONFIG: ${{ runner.temp }}/kubeconfig.yaml
+          CREATE_ONLY_KINDS: ${{ inputs.create-only-kinds }}
         run: |
           cd "${{ inputs.manifests }}"
           export IMAGE="${{ inputs.image }}"
           echo "部署镜像: ${IMAGE}"
+          RT="${{ runner.temp }}"
+          ANNOT="deploy-tke.nsfintech.io/create-only"
+          # 渲染 kustomize -> 注入 ${IMAGE} -> YAML 多文档 -> JSON Lines(每文档一行 JSON)。
+          # kustomize 的 -o 只支持写文件路径、不是格式选项,JSON 输出靠 yq eval-all;
+          # JSON Lines 便于下游 jq 按 annotation/kind 安全分流(kinds 走 --argjson,无注入)。
           # shellcheck disable=SC2016  # envsubst 的 ${IMAGE} 必须单引号原样传入,不能 shell 展开
-          # -n 强制落到目标 namespace:清单未写 metadata.namespace 时(kubectl 默认会落到
-          # context 的 default),会与 regcred 所在 namespace 不一致导致拉取 401。
-          kubectl kustomize . | envsubst '${IMAGE}' | kubectl apply -f - \
-            -n "${{ inputs.namespace }}" \
-            --wait=true --timeout="${{ inputs.timeout }}"
+          kubectl kustomize . | envsubst '${IMAGE}' | yq eval-all -o=json -I=0 '.' > "$RT/rendered.jsonl"
+          if [ ! -s "$RT/rendered.jsonl" ]; then
+            echo "::warning::渲染后无任何资源(manifests=${{ inputs.manifests }}),跳过 apply"
+            exit 0
+          fi
+          # create-only-kinds(逗号分隔) -> jq 数组 ["ConfigMap","Secret"];空则 []。
+          if [ -n "$CREATE_ONLY_KINDS" ]; then
+            KINDS_ARR=$(printf '%s' "$CREATE_ONLY_KINDS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -sc .)
+          else
+            KINDS_ARR='[]'
+          fi
+          # 分流:create-only = annotation=="true" OR kind∈列表;normal = 补集。
+          jq -c --argjson kinds "$KINDS_ARR" --arg annot "$ANNOT" \
+            'select((.metadata.annotations[$annot] == "true") or ([.kind] | inside($kinds)))' \
+            "$RT/rendered.jsonl" > "$RT/create-only.jsonl"
+          jq -c --argjson kinds "$KINDS_ARR" --arg annot "$ANNOT" \
+            'select((.metadata.annotations[$annot] != "true") and ([.kind] | inside($kinds) | not))' \
+            "$RT/rendered.jsonl" > "$RT/normal.jsonl"
+          # 1) 普通资源:slurp 成 kind:List 一次 apply(含 --wait 等 Deployment 滚动完成)。
+          #    -n 强制落到目标 namespace:清单未写 metadata.namespace 时(kubectl 默认会落到
+          #    context 的 default),会与 regcred 所在 namespace 不一致导致拉取 401。
+          if [ -s "$RT/normal.jsonl" ]; then
+            jq -s '{apiVersion:"v1",kind:"List",items:.}' "$RT/normal.jsonl" \
+              | kubectl apply -f - -n "${{ inputs.namespace }}" --wait=true --timeout="${{ inputs.timeout }}"
+          else
+            echo "无普通资源需要 apply(全部为 create-only)"
+          fi
+          # 2) create-only 资源:逐个 kubectl get 判断,不存在才 apply,已存在跳过(不覆盖)。
+          if [ -s "$RT/create-only.jsonl" ]; then
+            echo "create-only 资源(已存在则跳过,不覆盖手动改动):"
+            while IFS= read -r obj; do
+              [ -z "$obj" ] && continue
+              kind=$(printf '%s' "$obj" | jq -r '.kind')
+              name=$(printf '%s' "$obj" | jq -r '.metadata.name')
+              ns=$(printf '%s' "$obj" | jq -r --arg d "${{ inputs.namespace }}" '.metadata.namespace // $d')
+              if kubectl get "$kind" "$name" -n "$ns" >/dev/null 2>&1; then
+                echo "  ↳ 跳过(已存在): $kind/$name (ns=$ns)"
+              else
+                echo "  ↳ 创建(首次): $kind/$name (ns=$ns)"
+                printf '%s' "$obj" | kubectl apply -f - -n "$ns"
+              fi
+            done < "$RT/create-only.jsonl"
+          else
+            echo "无 create-only 资源(未标 annotation 且 create-only-kinds 为空)"
+          fi

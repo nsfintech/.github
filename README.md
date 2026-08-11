@@ -355,7 +355,33 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | `manifests` | string | `deploy` | 调用方仓库内 kustomization 根目录 |
 | `image-pull-secret` | string | `regcred` | TCR 拉取凭证 Secret 名；runner `.env` 有 `DOCKER_*` 时自动确保存在 |
 | `extranet` | boolean | `false` | `true` 用公网 kubeconfig（需集群开公网访问）；默认内网（runner 需在集群 VPC 内） |
-| `timeout` | string | `5m` | `kubectl apply --wait` 超时 |
+| `timeout` | string | `5m` | `kubectl apply --wait` 超时（仅普通资源） |
+| `create-only-kinds` | string | -（空） | 仅首次创建、已存在则跳过不覆盖的资源类型（逗号分隔，如 `ConfigMap,Secret`）；该 kind 的资源只在集群中不存在时才 apply。也可不传，改在单个资源上加 annotation `deploy-tke.nsfintech.io/create-only: "true"` 标记（两者取并集） |
+
+**create-only（仅首次创建，不覆盖已有）**：有些资源（典型 `ConfigMap`/`Secret` 这类初始化配置）部署后可能被运维手动调整，不该被流水线每次 apply 覆盖。本 workflow 渲染后按标记分流——普通资源照常 `kubectl apply --wait`（声明式同步）；create-only 资源逐个 `kubectl get` 判断，集群中不存在才 apply，已存在则跳过。两种标记方式（取并集）：
+
+1. **按 kind 批量**：传 `create-only-kinds: ConfigMap,Secret`，该 kind 全部资源视为 create-only。
+2. **精确到单个资源**：在资源 `metadata.annotations` 加 `deploy-tke.nsfintech.io/create-only: "true"`，只标记这一个资源（同 kind 下可个别例外）。
+
+```yaml
+# 例 1:所有 ConfigMap/Secret 都只在首次创建(caller stub 的 with:)
+deploy:
+  uses: nsfintech/.github/.github/workflows/deploy-tke.yml@v1
+  with:
+    create-only-kinds: ConfigMap,Secret
+
+# 例 2:只标记某个 ConfigMap(调用方清单里)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  annotations:
+    deploy-tke.nsfintech.io/create-only: "true"
+data:
+  log-level: info   # 首次部署写入,后续运维手动改 log-level 不会被流水线覆盖
+```
+
+分流依赖 yq（把 kustomize 的 YAML 多文档转 JSON Lines）+ jq（按 annotation/kind 筛选）；yq 由 `step-security/setup-yq@v1` 自动安装（pin 到 v4，setup-yq 默认的 v3 语法不兼容），无需 runner 预装。
 
 **注意（tag 触发的坑）**：与 docker-build-push 相同——release-please 用默认 `GITHUB_TOKEN` 打的 tag 不会触发本 stub 的 `on: push: tags`。需给 release-please 传 PAT/App token（见「权限」节）；否则用 `workflow_dispatch` 手动构建+部署。
 
