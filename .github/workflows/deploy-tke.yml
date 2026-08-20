@@ -29,7 +29,8 @@
 #   1) 资源 metadata.annotations['deploy-tke.nsfintech.io/create-only']='true' -- 精确到单个资源;
 #   2) workflow 输入 create-only-kinds='ConfigMap,Secret' -- 该 kind 全部资源视为 create-only。
 # 分流用 yq(把 kustomize 的 YAML 多文档转 JSON Lines) + jq(按 annotation/kind 筛选,kinds 走
-# --argjson 无注入风险);yq 由 step-security/setup-yq@v1 装(pin yq-version 到 v4.x,setup-yq
+# --argjson 无注入风险);yq 由 nsfintech/setup-yq 装(组织 fork,pin commit;上游
+# step-security/setup-yq 2026-08 起私有仓库强制付费订阅,pin yq-version 到 v4.x,setup-yq
 # 默认 v3 语法不兼容),不依赖 runner 预装。
 name: deploy-tke (reusable)
 
@@ -86,10 +87,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # 装 yq(v4) 用于清单分流:create-only 资源按 annotation/kind 筛选需把 kustomize 的
-      # YAML 多文档转 JSON Lines。step-security/setup-yq 默认装 v3.3.2(子命令式语法,与 v4 的
-      # eval/eval-all 完全不兼容),必须 pin yq-version 到 v4.x。带缓存,self-hosted runner
-      # 持久 tool cache 命中后近乎即时。version 带 v 前缀(mikefarah/yq 的 release tag 形如 v4.53.3)。
-      - uses: step-security/setup-yq@v1
+      # YAML 多文档转 JSON Lines。nsfintech/setup-yq(fork 自 step-security/setup-yq,唯一差异
+      # 是删掉了私有仓库订阅检查与 axios 依赖;StepSecurity 2026-08 起对私有仓库强制付费订阅)
+      # 默认装 v3.3.2(子命令式语法,与 v4 的 eval/eval-all 完全不兼容),必须 pin yq-version
+      # 到 v4.x。带缓存,self-hosted runner 持久 tool cache 命中后近乎即时。version 带 v 前缀
+      # (mikefarah/yq 的 release tag 形如 v4.53.3)。pin commit 防 tag 被移动。
+      - uses: nsfintech/setup-yq@e60341c79cf36f5216e0d0714236b0da0ce03762
         with:
           yq-version: 'v4.53.3'
 
@@ -157,7 +160,7 @@ jobs:
             echo "这些工具须在 self-hosted runner 上一次性预装(runner 是持久环境,不每次装,且 sudo 在 CI 非交互会话里要密码会挂):"
             echo "  kubectl:     curl -sSLo /root/kubectl \"https://dl.k8s.io/release/\$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\" && sudo install -m 755 /root/kubectl /usr/local/bin/kubectl"
             echo "  jq envsubst: dnf install -y jq gettext  (RHEL 系,envsubst 在 gettext 包;debian 系用 apt-get install -y jq gettext-base)"
-            echo "  (kustomize 不用单独装,用 kubectl kustomize 内置子命令;yq 由 step-security/setup-yq 自动装,无需预装;tccli 由 pip --user 装,见下)"
+            echo "  (kustomize 不用单独装,用 kubectl kustomize 内置子命令;yq 由 nsfintech/setup-yq 自动装,无需预装;tccli 由 pip --user 装,见下)"
             exit 1
           fi
 
