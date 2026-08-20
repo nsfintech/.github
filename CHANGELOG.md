@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/nsfintech/.github/compare/v1.7.1...v1.7.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* **ci:** switch setup-yq to nsfintech fork without subscription check ([#25](https://github.com/nsfintech/.github/issues/25)) ([2e0638f](https://github.com/nsfintech/.github/commit/2e0638f0d48e8f63be9738021d98bfd95159d8d8))
+
 ## [1.7.1](https://github.com/nsfintech/.github/compare/v1.7.0...v1.7.1) (2026-08-11)
 
 
