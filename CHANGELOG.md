@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/nsfintech/.github/compare/v1.7.2...v1.8.0) (2026-08-29)
+
+
+### Features
+
+* **deploy-tke:** envsubst-vars input for cluster-specific manifest injection ([#27](https://github.com/nsfintech/.github/issues/27)) ([6b8071e](https://github.com/nsfintech/.github/commit/6b8071ee2cf7e818774bd60f3740dd7e338e80fe))
+
 ## [1.7.2](https://github.com/nsfintech/.github/compare/v1.7.1...v1.7.2) (2026-08-20)
 
 
