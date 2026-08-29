@@ -20,7 +20,9 @@
 # runner .env 变量只在 run 步骤的 shell 可用,所以第一步先桥接到 $GITHUB_ENV(并 add-mask)。
 #
 # 镜像注入:调用方清单的 Deployment image 字段写占位 ${IMAGE},本 workflow 用
-# kustomize build 渲染后 envsubst 只替换 ${IMAGE}(不动清单里其它 $ 变量),再全量 apply。
+# kustomize build 渲染后 envsubst 替换 ${IMAGE}(不动清单里其它 $ 变量),再全量 apply。
+# 集群特定注入(LB id、子网等)走 envsubst-vars 输入:清单里写 ${LB_ID} 之类占位,
+# 值从 runner .env 读(优先 TKE_<ENV>_LB_ID 按环境区分,回退 LB_ID 环境无关),不进仓库。
 #
 # create-only(仅首次创建,已存在则跳过不覆盖):有些资源(典型 ConfigMap/Secret 这类初始化
 # 配置)部署后可能被运维手动调整,不该被流水线每次 apply 覆盖。渲染后按标记分流--普通资源
@@ -74,6 +76,10 @@ on:
         default: 5m
       create-only-kinds:
         description: '仅首次创建、已存在则跳过不覆盖的资源类型(逗号分隔,如 ConfigMap,Secret);该 kind 的资源只在集群中不存在时才 apply。也可不传,改在单个资源上加 annotation deploy-tke.nsfintech.io/create-only: "true" 标记(两者取并集)'
+        type: string
+        default: ''
+      envsubst-vars:
+        description: '额外注入清单的环境变量名(逗号分隔,如 LB_ID,LB_SUBNET_ID);清单里写 ${LB_ID} 占位。值从 runner env 读:优先 TKE_<ENV>_<VAR>(按环境区分,如 TKE_TEST_LB_ID),回退 <VAR>(环境无关);找不到即报错。IMAGE 固定注入,无需列'
         type: string
         default: ''
 
@@ -144,6 +150,32 @@ jobs:
           echo "CLUSTER_ID=$CLUSTER_ID" >> "$GITHUB_ENV"
           echo "REGION=$REGION" >> "$GITHUB_ENV"
           echo "目标集群: ${{ inputs.environment || inputs.cluster-id }} -> $CLUSTER_ID ($REGION)"
+
+          # 额外注入变量(envsubst-vars 输入,逗号分隔):清单里的 ${VAR} 占位从 runner env 取值,
+          # 优先 TKE_<ENV>_VAR(多集群/多环境各自配),回退 VAR(环境无关)。桥接 GITHUB_ENV
+          # 供渲染步骤使用并脱敏;变量名强制为合法 shell 标识符(防注入 envsubst 格式串)。
+          EXTRA_SUBST=''
+          if [ -n "${{ inputs.envsubst-vars }}" ]; then
+            for v in $(printf '%s' "${{ inputs.envsubst-vars }}" | tr ',' ' '); do
+              v=$(printf '%s' "$v" | tr -d '[:space:]')
+              [ -z "$v" ] && continue
+              if ! printf '%s' "$v" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+                echo "::error::envsubst-vars 含非法变量名: $v(须为 shell 标识符)"
+                exit 1
+              fi
+              val=''
+              if [ -n "$ENV_UPPER" ]; then
+                env_var="TKE_${ENV_UPPER}_${v}"
+                val="${!env_var}"
+              fi
+              [ -z "$val" ] && val="${!v}"
+              [ -z "$val" ] && { echo "::error::runner env 缺少 $v(在 runner .env 配 TKE_${ENV_UPPER}_${v} 或 $v,并重启 runner 加载)"; exit 1; }
+              echo "::add-mask::$val"
+              printf '%s=%s\n' "$v" "$val" >> "$GITHUB_ENV"
+              EXTRA_SUBST="${EXTRA_SUBST} \${$v}"
+            done
+          fi
+          printf 'EXTRA_SUBST=%s\n' "$EXTRA_SUBST" >> "$GITHUB_ENV"
 
       - name: 检查工具(kubectl/jq/envsubst 须在 runner 预装;yq 由上一步 setup-yq 装)
         run: |
@@ -233,8 +265,12 @@ jobs:
           # 渲染 kustomize -> 注入 ${IMAGE} -> YAML 多文档 -> JSON Lines(每文档一行 JSON)。
           # kustomize 的 -o 只支持写文件路径、不是格式选项,JSON 输出靠 yq eval-all;
           # JSON Lines 便于下游 jq 按 annotation/kind 安全分流(kinds 走 --argjson,无注入)。
-          # shellcheck disable=SC2016  # envsubst 的 ${IMAGE} 必须单引号原样传入,不能 shell 展开
-          kubectl kustomize . | envsubst '${IMAGE}' | yq eval-all -o=json -I=0 '.' > "$RT/rendered.jsonl"
+          # 注入变量 = 固定 ${IMAGE} + envsubst-vars 额外变量(EXTRA_SUBST 值为字面量
+          # " ${LB_ID} ...",拼接后整体作为 envsubst 格式串,清单里其它 $ 变量不动)。
+          # shellcheck disable=SC2016  # 格式串里的 ${...} 必须原样传给 envsubst,不能 shell 展开
+          SUBST_VARS='${IMAGE}'
+          [ -n "${EXTRA_SUBST:-}" ] && SUBST_VARS="${SUBST_VARS}${EXTRA_SUBST}"
+          kubectl kustomize . | envsubst "$SUBST_VARS" | yq eval-all -o=json -I=0 '.' > "$RT/rendered.jsonl"
           if [ ! -s "$RT/rendered.jsonl" ]; then
             echo "::warning::渲染后无任何资源(manifests=${{ inputs.manifests }}),跳过 apply"
             exit 0
