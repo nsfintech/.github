@@ -182,6 +182,8 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | 输入 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `toolchain` | string | `stable` | Rust toolchain channel（stable/beta/nightly 或具体版本）；edition 2024 需 1.85+ |
+| `prebuilt-artifact` | string | `''` | 前置构建产物 artifact 名（如 `web-dist`）；非空则 clippy job 先下载并解压到 `prebuilt-path`，用于「Rust 编译期嵌入前端产物」场景（见下） |
+| `prebuilt-path` | string | `''` | 前置产物解压目标路径，相对仓库根（如 `web/dist`）；仅 `prebuilt-artifact` 非空时生效 |
 
 **cargo-deny 审计范围**：
 
@@ -189,6 +191,75 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 - `licenses`：依赖许可证是否在 `deny.toml` 白名单（防意外引入 GPL/AGPL 等传染性 license）。
 - `bans`：禁用特定 crate（默认 deny `openssl`/`openssl-sys`，强制 rustls；可按仓库在 `deny.toml` 调整）。
 - `sources`：限制依赖来源（只允许 crates.io，禁 git 依赖）。
+
+**前后端混合仓库（Rust 嵌入前端产物）**：rsflow 这类 monorepo 用 rust-embed 把 `web/dist` 嵌进二进制，clippy 编译期需要 dist 存在，但 CI 机器不该为跑 Rust 门禁装 node。做法：同 run 内先用 node-ci 模板构建前端并上传 artifact，再 `needs` 串联 rust-ci 并传 `prebuilt-artifact`，clippy job 会把产物解压到 `web/dist` 后再编译：
+
+```yaml
+jobs:
+  web-build:
+    uses: nsfintech/.github/.github/workflows/node-ci.yml@v1
+    with:
+      node-version: '24'
+      working-directory: web
+      build: pnpm run build
+      artifact-name: web-dist
+      artifact-path: dist
+  rust-ci:
+    needs: web-build
+    uses: nsfintech/.github/.github/workflows/rust-ci.yml@v1
+    with:
+      prebuilt-artifact: web-dist
+      prebuilt-path: web/dist
+    secrets: inherit
+```
+
+（调用方仓库需自行保证 build.rs 在「有 dist 无 node_modules」时跳过前端构建，参考 `nsfintech/rsflow` 的 `crates/rsflow-agent/build.rs`。）
+
+### node-ci：Node 质量门禁 + 构建
+
+对 Node/前端项目跑统一 CI：安装依赖，可选 lint / test / build，可选上传构建产物 artifact。环境用 setup action 引入（`actions/setup-node` + `pnpm/action-setup`），**不要求 runner 宿主机预装 node**；pnpm 版本优先读 `package.json` 的 `packageManager` 字段（推荐用它固定版本），否则用 `pnpm-version` 输入。
+
+两种用法：
+
+- **纯前端仓库**：直接当 CI 用，配 `lint` / `test` / `build` 命令。
+- **前后端混合仓库**：只配 `build` + `artifact-name`，产物交给同 run 的 rust-ci clippy job 消费（见上一节示例，首个用户 `nsfintech/rsflow`）。
+
+文件：可复用 workflow [`node-ci.yml`](.github/workflows/node-ci.yml) / starter 模板 [`workflow-templates/node-ci.yml`](workflow-templates/node-ci.yml)。
+
+**前提**：仓库有对应包管理器的 lockfile（pnpm-lock.yaml / package-lock.json，安装用 frozen/ci 模式保证可复现）；用 pnpm 时建议在 `package.json` 加 `"packageManager": "pnpm@<版本>"`。
+
+**如何使用**（某前端仓库）：
+
+1. 加 caller stub：Actions -> New workflow -> 搜 "Node CI" -> 采用；或手动新建 `.github/workflows/node-ci.yml`：
+   ```yaml
+   name: node-ci
+   on:
+     push:
+       branches: [main]
+     pull_request:
+   permissions:
+     contents: read
+   jobs:
+     node-ci:
+       uses: nsfintech/.github/.github/workflows/node-ci.yml@v1
+       secrets: inherit
+   ```
+2. 按项目配 `with:` 输入（命令、目录、产物等，见下表）。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `node-version` | string | `22` | Node 版本（传给 actions/setup-node） |
+| `working-directory` | string | `.` | 前端项目目录，相对仓库根（monorepo 子目录如 `web`） |
+| `package-manager` | string | `pnpm` | `pnpm` 或 `npm`（决定 action-setup 与缓存方式；各命令输入需自行匹配） |
+| `pnpm-version` | string | `''` | pnpm 版本；空则读 `package.json` 的 `packageManager` 字段 |
+| `install` | string | `''` | 安装命令；空则按包管理器取默认（pnpm: `pnpm install --frozen-lockfile` / npm: `npm ci`） |
+| `lint` | string | `''` | lint 命令；空则跳过 |
+| `test` | string | `''` | test 命令；空则跳过（需外部服务的 e2e 不适用） |
+| `build` | string | `''` | 构建命令；空则跳过 |
+| `artifact-name` | string | `''` | 构建产物 artifact 名；空则不上传 |
+| `artifact-path` | string | `dist` | 构建产物路径，相对 `working-directory` |
 
 ### docker-build-push：构建并推送 Docker 镜像
 
@@ -387,7 +458,7 @@ data:
 
 ## 权限
 
-五个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、docker-build-push 与 deploy-tke 只需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
+六个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci 与 deploy-tke 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact；docker-build-push 需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

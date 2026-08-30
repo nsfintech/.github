@@ -1,0 +1,23 @@
+# starter 模板:组织内各仓库在 Actions 标签页 "New workflow" 选择本模板后,GitHub
+# 会把本文件复制到该仓库的 .github/workflows/node-ci.yml,成为「调用方 stub」--
+# 按需触发(纯前端仓库: push main 与 PR)调用 nsfintech/.github 里的可复用 workflow。
+#
+# 提供 Node 项目的安装 / lint / test / build 统一步骤,可选上传构建产物。
+# pnpm 版本优先读 package.json 的 packageManager 字段(推荐固定,如 "pnpm@9.x")。
+#
+# 前后端混合仓库(Rust 嵌入前端产物)的用法见 README 的 rust-ci 一节:
+# 本 stub 的 job 上传 artifact 后,用 needs 串联 rust-ci stub 并传 prebuilt-artifact。
+name: node-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-ci:
+    uses: nsfintech/.github/.github/workflows/node-ci.yml@v1
+    secrets: inherit

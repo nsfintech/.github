@@ -1,0 +1,114 @@
+# 可复用 workflow:Node 质量门禁 + 构建
+#
+# 提供组织内 Node/前端项目统一的 CI 步骤:安装依赖(可选 lint/test/build),
+# 可选上传构建产物 artifact 供同 run 的后续 job 消费(如 Rust 仓库嵌入前端产物
+# 后再 clippy,见 rust-ci 模板的 prebuilt-artifact 输入)。
+#
+# 环境引入方式与 rust-ci 一致--setup action(actions/setup-node)把 Node 装进
+# runner 环境,不依赖 runner 宿主机预装 node;pnpm 用 pnpm/action-setup 引入,
+# 版本优先读 package.json 的 packageManager 字段(推荐固定),否则用 pnpm-version 输入。
+#
+# 纯前端仓库:直接当 CI 用(配 lint/test/build)。
+# 前后端混合仓库(如 nsfintech/rsflow 的 web/):只配 build + artifact 上传,
+# 产物交给 rust-ci 的 clippy job。
+#
+# 调用方 stub 见 workflow-templates/node-ci.yml。
+name: node-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node 版本(传给 actions/setup-node,如 22 / 24)'
+        type: string
+        default: '22'
+      working-directory:
+        description: '前端项目目录,相对仓库根(纯前端仓库用默认 .,monorepo 子目录如 web)'
+        type: string
+        default: '.'
+      package-manager:
+        description: '包管理器:pnpm 或 npm(决定 action-setup 与缓存方式;命令输入需自行匹配)'
+        type: string
+        default: 'pnpm'
+      pnpm-version:
+        description: 'pnpm 版本;空则读 package.json 的 packageManager 字段(推荐该方式固定版本)'
+        type: string
+        default: ''
+      install:
+        description: '依赖安装命令;空则按包管理器取默认(pnpm: pnpm install --frozen-lockfile / npm: npm ci)'
+        type: string
+        default: ''
+      lint:
+        description: 'lint 命令;空则跳过'
+        type: string
+        default: ''
+      test:
+        description: 'test 命令;空则跳过(注意:需外部服务的 e2e 不适用本模板)'
+        type: string
+        default: ''
+      build:
+        description: '构建命令;空则跳过'
+        type: string
+        default: ''
+      artifact-name:
+        description: '构建产物 artifact 名;空则不上传(供同 run 后续 job 用 rust-ci 的 prebuilt-artifact 消费)'
+        type: string
+        default: ''
+      artifact-path:
+        description: '构建产物路径,相对 working-directory(如 dist)'
+        type: string
+        default: 'dist'
+
+jobs:
+  node-ci:
+    name: node (${{ inputs.package-manager }})
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm 需先于 setup-node 安装(cache: pnpm 依赖 pnpm 已就位)
+      - uses: pnpm/action-setup@v4
+        if: inputs.package-manager == 'pnpm'
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - uses: actions/setup-node@v4
+        if: inputs.package-manager == 'pnpm'
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - uses: actions/setup-node@v4
+        if: inputs.package-manager != 'pnpm'
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: ${{ inputs.install != '' && inputs.install
+            || (inputs.package-manager == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci') }}
+      - name: Lint
+        if: inputs.lint != ''
+        run: ${{ inputs.lint }}
+      - name: Test
+        if: inputs.test != ''
+        run: ${{ inputs.test }}
+      - name: Build
+        if: inputs.build != ''
+        run: ${{ inputs.build }}
+
+      # upload-artifact 不吃 defaults.run.working-directory,路径相对仓库根手工拼接
+      - uses: actions/upload-artifact@v4
+        if: inputs.artifact-name != ''
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.working-directory == '.'
+            && inputs.artifact-path
+            || format('{0}/{1}', inputs.working-directory, inputs.artifact-path) }}
+          if-no-files-found: error
