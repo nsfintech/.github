@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/nsfintech/.github/compare/v1.8.0...v1.9.0) (2026-08-30)
+
+
+### Features
+
+* add node-ci reusable workflow and prebuilt-artifact input for rust-ci ([#29](https://github.com/nsfintech/.github/issues/29)) ([1adbcfc](https://github.com/nsfintech/.github/commit/1adbcfc73692de450d277e535c306a77121b7ad6))
+
 ## [1.8.0](https://github.com/nsfintech/.github/compare/v1.7.2...v1.8.0) (2026-08-29)
 
 
