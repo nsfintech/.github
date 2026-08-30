@@ -25,7 +25,7 @@ on:
         type: string
         default: stable
       prebuilt-artifact:
-        description: '前置构建产物 artifact 名(如 web-dist);非空则 clippy job 先下载该 artifact 解压到 prebuilt-path。需与上传方(node-ci 模板的 artifact-name)同名,且调用方 workflow 里 clippy 所在 job 需 needs 上传 job'
+        description: '前置构建产物 artifact 名(如 web-dist);非空则 clippy job 先下载该 artifact 解压到 prebuilt-path。需与上传方(node-ci 模板的 artifact-name)同名,且调用方 workflow 里 clippy 所在 job 需 needs 上传 job。注意:调用方需在该 job 级授予 contents: read + actions: read(download-artifact 需要 actions: read,被调 workflow 无法自行提升权限)'
         type: string
         default: ''
       prebuilt-path:
@@ -50,9 +50,11 @@ jobs:
   clippy:
     name: cargo clippy
     runs-on: [self-hosted, linux]
-    permissions:
-      contents: read
-      actions: read  # download-artifact 取同 run 前置 job 产物所需
+    # 故意不声明 permissions:GitHub 校验"被调 job 声明 ⊆ caller 授予",
+    # 声明 actions: read 会让未授予该权限的调用方(仅 contents: read)整个 run
+    # 直接 startup_failure(零 job)。不声明则继承 caller job 级权限:普通
+    # 调用方得 contents: read(与不传 prebuilt 时一致);传 prebuilt-artifact
+    # 的调用方在自身 job 级授 contents: read + actions: read 即可下载产物。
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@v1
