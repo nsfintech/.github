@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.1](https://github.com/nsfintech/.github/compare/v1.9.0...v1.9.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **rust-ci:** drop clippy job permissions declaration to avoid caller startup_failure ([e8bfbe6](https://github.com/nsfintech/.github/commit/e8bfbe64e49e921aa46f2cb3b6e3f7e28af051de))
+* **rust-ci:** drop clippy job permissions declaration to avoid caller startup_failure ([cb2b5e7](https://github.com/nsfintech/.github/commit/cb2b5e7d6e485d20b98c6b2df175a642e3cc97be))
+
 ## [1.9.0](https://github.com/nsfintech/.github/compare/v1.8.0...v1.9.0) (2026-08-30)
 
 
