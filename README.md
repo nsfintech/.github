@@ -182,7 +182,7 @@ git commit --allow-empty -m "chore: graduate to 1.0.0" -m "Release-As: 1.0.0"
 | 输入 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `toolchain` | string | `stable` | Rust toolchain channel（stable/beta/nightly 或具体版本）；edition 2024 需 1.85+ |
-| `prebuilt-artifact` | string | `''` | 前置构建产物 artifact 名（如 `web-dist`）；非空则 clippy job 先下载并解压到 `prebuilt-path`，用于「Rust 编译期嵌入前端产物」场景（见下） |
+| `prebuilt-artifact` | string | `''` | 前置构建产物 artifact 名（如 `web-dist`）；非空则 clippy job 先下载并解压到 `prebuilt-path`，用于「Rust 编译期嵌入前端产物」场景（见下）。**传此输入时调用方需在 rust-ci job 级授予 `permissions: contents: read + actions: read`**（download-artifact 需要 actions: read，被调 workflow 无法自行提升权限，不授会整 run startup_failure） |
 | `prebuilt-path` | string | `''` | 前置产物解压目标路径，相对仓库根（如 `web/dist`）；仅 `prebuilt-artifact` 非空时生效 |
 
 **cargo-deny 审计范围**：
@@ -207,6 +207,11 @@ jobs:
   rust-ci:
     needs: web-build
     uses: nsfintech/.github/.github/workflows/rust-ci.yml@v1
+    # download-artifact 需要 actions: read；rust-ci 模板的 clippy job 故意
+    # 不声明 permissions（继承调用方授予），需在此 job 级显式授予
+    permissions:
+      contents: read
+      actions: read
     with:
       prebuilt-artifact: web-dist
       prebuilt-path: web/dist
@@ -217,7 +222,7 @@ jobs:
 
 ### node-ci：Node 质量门禁 + 构建
 
-对 Node/前端项目跑统一 CI：安装依赖，可选 lint / test / build，可选上传构建产物 artifact。环境用 setup action 引入（`actions/setup-node` + `pnpm/action-setup`），**不要求 runner 宿主机预装 node**；pnpm 版本优先读 `package.json` 的 `packageManager` 字段（推荐用它固定版本），否则用 `pnpm-version` 输入。
+对 Node/前端项目跑统一 CI：安装依赖，可选 lint / test / build，可选上传构建产物 artifact。环境用 setup action 引入（`actions/setup-node` + `pnpm/action-setup`），**不要求 runner 宿主机预装 node**；pnpm 版本优先读 `package.json` 的 `packageManager` 字段（推荐用它固定版本），否则用 `pnpm-version` 输入。注意 `pnpm/action-setup` 只读**仓库根** `package.json` 的 `packageManager`，monorepo 子目录（`working-directory` 非根）场景需显式传 `pnpm-version`。
 
 两种用法：
 
