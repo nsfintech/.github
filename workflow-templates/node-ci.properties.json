@@ -1,0 +1,4 @@
+{
+  "name": "Node CI (install + lint + test + build)",
+  "description": "Node/前端项目统一 CI:安装依赖,可选 lint/test/build,可选上传构建产物 artifact(可配合 rust-ci 的 prebuilt-artifact 做前后端混合仓库门禁)。调用 nsfintech/.github 的可复用 workflow,pnpm 版本建议用 package.json 的 packageManager 字段固定。"
+}

@@ -8,6 +8,10 @@
 # 不含测试 -- 测试模式因项目而异(单 crate / workspace / nextest / e2e 需外部服务),
 # 后续单独做测试模板;调用方若需测试,在仓库自行加 job。
 #
+# 前后端混合仓库(Rust 编译期嵌入前端产物,如 nsfintech/rsflow 的 rust-embed):
+# 传 prebuilt-artifact / prebuilt-path,clippy job 会先下载前置 job(通常由
+# node-ci 模板构建)上传的产物到指定路径,再跑 clippy。不传则行为不变。
+#
 # 运行在调用方仓库上下文(GITHUB_REPOSITORY 为调用方),自动 lint 调用方代码。
 # 调用方需在仓库根提供 deny.toml(cargo-deny 配置,per-repo;各仓库依赖不同,不共享)。
 # 调用方 stub 见 workflow-templates/rust-ci.yml。
@@ -20,6 +24,14 @@ on:
         description: 'Rust toolchain channel(stable/beta/nightly 或具体版本如 1.97);edition 2024 需 1.85+'
         type: string
         default: stable
+      prebuilt-artifact:
+        description: '前置构建产物 artifact 名(如 web-dist);非空则 clippy job 先下载该 artifact 解压到 prebuilt-path。需与上传方(node-ci 模板的 artifact-name)同名,且调用方 workflow 里 clippy 所在 job 需 needs 上传 job'
+        type: string
+        default: ''
+      prebuilt-path:
+        description: '前置构建产物解压目标路径,相对仓库根(如 web/dist);仅 prebuilt-artifact 非空时生效'
+        type: string
+        default: ''
 
 jobs:
   fmt:
@@ -40,12 +52,21 @@ jobs:
     runs-on: [self-hosted, linux]
     permissions:
       contents: read
+      actions: read  # download-artifact 取同 run 前置 job 产物所需
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ inputs.toolchain }}
           components: clippy
+      # 前端产物嵌入场景:先取前置 job(node-ci 构建)上传的产物(如 web/dist),
+      # 让 rust-embed 等编译期嵌入有物可嵌。v4 artifact 内容即上传目录下的文件,
+      # 直接解到目标路径即还原目录结构。
+      - uses: actions/download-artifact@v4
+        if: inputs.prebuilt-artifact != ''
+        with:
+          name: ${{ inputs.prebuilt-artifact }}
+          path: ${{ inputs.prebuilt-path }}
       - run: cargo clippy --all-targets -- -D warnings
 
   deny:
