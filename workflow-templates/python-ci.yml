@@ -1,0 +1,25 @@
+# starter 模板:组织内各仓库在 Actions 标签页 "New workflow" 选择本模板后,GitHub
+# 会把本文件复制到该仓库的 .github/workflows/python-ci.yml,成为「调用方 stub」--它
+# 在 push main 与 PR 时调用 nsfintech/.github 里的可复用 workflow。
+#
+# 提供 Python 项目的安装 / lint / test 统一步骤(uv + uv 托管 Python,均由 setup
+# action 引入,不依赖 runner 预装)。按需改 lint/test 命令;monorepo 子目录改
+# working-directory。不含构建/发版(用 docker-build-push / release-please 模板)。
+name: python-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-ci:
+    uses: nsfintech/.github/.github/workflows/python-ci.yml@v1
+    with:
+      python-version: '3.11'
+      lint: uv run ruff check src tests
+      test: uv run pytest
+    secrets: inherit

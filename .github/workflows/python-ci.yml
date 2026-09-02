@@ -1,0 +1,76 @@
+# 可复用 workflow:Python 质量门禁
+#
+# 提供组织内 Python 项目统一的 CI 步骤:安装依赖(uv sync --frozen,锁文件强制一致)
+# + 可选 lint / test,与 node-ci / rust-ci 同一质量门禁定位。
+#
+# 环境引入方式与 node-ci 一致--setup action(astral-sh/setup-uv)把 uv 装进 runner
+# 环境,不依赖 runner 宿主机预装 uv;Python 本体由 uv python install 按
+# python-version 输入下载管理,也不依赖系统 Python。uv sync 默认含 dev 依赖
+# (ruff/pytest 等在 dependency-groups.dev),lint/test 开箱可用。
+#
+# 纯 Python 仓库:直接当 CI 用(配 lint/test)。
+# 需要构建产物(如 docker build)的仓库:产物交给 docker-build-push 模板,本模板不含 build。
+# 测试纪律:仅跑 mock 过的单元测试;依赖真实服务器/凭证的 e2e 不适用本模板
+# (调用方仓库用 pytest marker 隔离,默认集合不含 e2e)。
+#
+# 调用方 stub 见 workflow-templates/python-ci.yml。
+name: python-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Python 版本(由 uv python install 下载管理,如 3.11 / 3.12)'
+        type: string
+        default: '3.11'
+      working-directory:
+        description: 'Python 项目目录,相对仓库根(纯 Python 仓库用默认 .,monorepo 子目录如 worker)'
+        type: string
+        default: '.'
+      uv-version:
+        description: 'uv 版本;空则用 astral-sh/setup-uv 默认最新'
+        type: string
+        default: ''
+      install:
+        description: '依赖安装命令;空则默认 uv sync --frozen(lockfile 强制一致,含 dev 依赖)'
+        type: string
+        default: ''
+      lint:
+        description: 'lint 命令(如 uv run ruff check .);空则跳过'
+        type: string
+        default: ''
+      test:
+        description: 'test 命令(如 uv run pytest);空则跳过(注意:需外部服务的 e2e 不适用本模板)'
+        type: string
+        default: ''
+
+jobs:
+  python-ci:
+    name: python (uv)
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ inputs.uv-version != '' && inputs.uv-version || '' }}
+          enable-cache: true
+          cache-dependency-subdirectory: ${{ inputs.working-directory }}
+
+      # uv 托管的 Python,不依赖 runner 系统 Python
+      - name: Install Python
+        run: uv python install ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install != '' && inputs.install || 'uv sync --frozen' }}
+      - name: Lint
+        if: inputs.lint != ''
+        run: ${{ inputs.lint }}
+      - name: Test
+        if: inputs.test != ''
+        run: ${{ inputs.test }}
