@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/nsfintech/.github/compare/v1.9.1...v1.10.0) (2026-09-02)
+
+
+### Features
+
+* 新增 python-ci 可复用 workflow 与 starter 模板 ([#33](https://github.com/nsfintech/.github/issues/33)) ([8c54fc5](https://github.com/nsfintech/.github/commit/8c54fc5ee775d6da97342140c89187e4221f350e))
+
 ## [1.9.1](https://github.com/nsfintech/.github/compare/v1.9.0...v1.9.1) (2026-08-30)
 
 
