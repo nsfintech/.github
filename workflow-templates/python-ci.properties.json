@@ -1,0 +1,4 @@
+{
+  "name": "Python CI (uv)",
+  "description": "uv + uv 托管 Python 的统一质量门禁：安装（lockfile 冻结）/ lint / test。调用 nsfintech/.github 的可复用 workflow。"
+}

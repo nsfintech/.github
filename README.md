@@ -266,6 +266,51 @@ jobs:
 | `artifact-name` | string | `''` | 构建产物 artifact 名；空则不上传 |
 | `artifact-path` | string | `dist` | 构建产物路径，相对 `working-directory` |
 
+### python-ci：Python 质量门禁
+
+uv 项目的安装 / lint / test 统一步骤，与 node-ci / rust-ci 同一质量门禁定位。环境引入方式与 node-ci 一致——setup action（`astral-sh/setup-uv`）把 uv 装进 runner，不依赖宿主机预装；Python 本体由 `uv python install` 按 `python-version` 下载管理，也不依赖系统 Python。`uv sync --frozen` 含 dev 依赖（ruff/pytest 放 `dependency-groups.dev`），lint/test 开箱可用。
+
+**测试纪律**：仅跑 mock 过的单元测试；依赖真实服务器/凭证的 e2e 不适用本模板（调用方仓库用 pytest marker 隔离，默认集合不含 e2e）。
+
+文件：可复用 workflow [`python-ci.yml`](.github/workflows/python-ci.yml) / starter 模板 [`workflow-templates/python-ci.yml`](workflow-templates/python-ci.yml)。
+
+**前提**：仓库用 uv 管理依赖，有 `uv.lock` 与 `pyproject.toml`（安装用 frozen 模式保证可复现）。
+
+**如何使用**（某 Python 仓库）：
+
+1. 加 caller stub：Actions -> New workflow -> 搜 "Python CI" -> 采用；或手动新建 `.github/workflows/python-ci.yml`：
+   ```yaml
+   name: python-ci
+   on:
+     push:
+       branches: [main]
+     pull_request:
+   permissions:
+     contents: read
+   jobs:
+     python-ci:
+       uses: nsfintech/.github/.github/workflows/python-ci.yml@v1
+       with:
+         python-version: '3.11'
+         lint: uv run ruff check src tests
+         test: uv run pytest
+       secrets: inherit
+   ```
+2. 按项目配 `with:` 输入（命令、目录等，见下表）。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `python-version` | string | `3.11` | Python 版本（由 `uv python install` 下载管理） |
+| `working-directory` | string | `.` | Python 项目目录，相对仓库根（monorepo 子目录如 `worker`） |
+| `uv-version` | string | `''` | uv 版本；空则用 setup-uv 默认最新 |
+| `install` | string | `''` | 安装命令；空则默认 `uv sync --frozen`（lockfile 强制一致，含 dev 依赖） |
+| `lint` | string | `''` | lint 命令（如 `uv run ruff check .`）；空则跳过 |
+| `test` | string | `''` | test 命令（如 `uv run pytest`）；空则跳过（需外部服务的 e2e 不适用） |
+
+不含构建/发版：镜像构建用 docker-build-push 模板，发版用 release-please 模板。
+
 ### docker-build-push：构建并推送 Docker 镜像
 
 构建 Docker 镜像并推送到腾讯云 TCR 私有仓库。release-please 打 `v*` tag 时触发（含 stable `v1.2.3` 与预发布 `v1.2.3-rc.1`），打 `semver`/`sha`/`latest` 标签；也支持手动 `workflow_dispatch` 测试构建。
@@ -463,7 +508,7 @@ data:
 
 ## 权限
 
-六个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci 与 deploy-tke 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact；docker-build-push 需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
+七个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci、python-ci 与 deploy-tke 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact；docker-build-push 需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 
