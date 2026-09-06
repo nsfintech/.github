@@ -506,9 +506,94 @@ data:
 
 **注意（tag 触发的坑）**：与 docker-build-push 相同——release-please 用默认 `GITHUB_TOKEN` 打的 tag 不会触发本 stub 的 `on: push: tags`。需给 release-please 传 PAT/App token（见「权限」节）；否则用 `workflow_dispatch` 手动构建+部署。
 
+### repsy-publish：发布包到 repsy 私有制品仓库
+
+把包发布到 [repsy.io](https://repsy.io) 私有制品仓库，支持三种生态按需开关：**cargo**（crate）、**npm**（scoped 包）、**pypi**（wheel，默认 maturin 构建 Rust 扩展）。与 release-please 分支模型对齐：test 分支 rc tag 发预发布包、main 分支 stable tag 发正式包。
+
+**版本模型**：tag 是单一事实源。cargo 侧 release-please 已把 workspace version bump 到与 tag 一致（workflow 校验不覆盖）；npm/pypi 侧发布时现场把 tag 盖章进 `package.json` / `pyproject.toml`。rc 版本号三端写法：cargo/npm 用 `0.2.0-rc.1`（semver 预发布），pypi 转成 `0.2.0rc1`（PEP 440，连字符形式会被构建后端拒绝，workflow 自动转换）。
+
+**三端预发布消费语义**（调研结论，已写进发布策略）：
+
+| 生态 | 默认安装会装到 rc？ | 装 rc | 装 stable |
+| --- | --- | --- | --- |
+| npm | 不会（rc 不满足 `^x.y.z`） | `npm i pkg@rc`（dist-tag）或 `npm i pkg@0.2.0-rc.1` | `npm i pkg`（latest） |
+| pypi | 不会（pip 默认跳过预发布） | `pip install pkg==0.2.0rc1` 或 `--pre` | `pip install pkg` |
+| cargo | 不会（预发布不满足 `^x.y.z`） | `cargo add pkg@=0.2.0-rc.1 --registry repsy` | `cargo add pkg --registry repsy` |
+
+npm 发 rc 必须打 `--tag rc`（否则 rc 占用 `latest`，所有 `npm i pkg` 都装到 rc）；stable 默认打 `latest`。
+
+**认证不走 GitHub secret**（与 DOCKER_* 同思路）：凭证配在**自托管 runner 的 `.env`**，workflow 启动时桥接到 `$GITHUB_ENV`（`add-mask` 脱敏）：
+
+```
+REPSY_CARGO_REGISTRY=https://repo.repsy.io/<user>/<registry>     # cargo sparse index（workflow 拼 sparse+ 前缀）
+REPSY_NPM_REGISTRY=https://repo.repsy.io/<user>/<registry>/     # npm registry URL
+REPSY_PYPI_REGISTRY=https://repo.repsy.io/<user>/<registry>/api/pypi   # twine 上传地址
+REPSY_CARGO_TOKEN=<Deploy Token>      # cargo 发布认证（须 Deploy Token，非账号密码）
+REPSY_NPM_TOKEN=<Deploy Token>        # npm _authToken
+REPSY_PYPI_USER=<用户名>              # pypi 侧用账号密码（repsy pypi 不支持 token）
+REPSY_PYPI_PASSWORD=<密码>
+```
+
+文件：可复用 workflow [`repsy-publish.yml`](.github/workflows/repsy-publish.yml) / starter 模板 [`workflow-templates/repsy-publish.yml`](workflow-templates/repsy-publish.yml)。
+
+**cargo 多 crate workspace 前提**（实验验证过的契约）：
+
+1. workspace 内部依赖须同时写 `version` + `registry = "repsy"`（`path` 保留——本地开发 path 优先零影响，不配凭证也能 build/test）；`cargo package` 会自动重写为指向本 registry 的依赖。
+2. 要发布的 crate 按**拓扑序**传给 `cargo-publish-crates`（如 `rslog-core,rslog`，core 在前），workflow 逐个 `cargo publish -p`。重复版本（重跑/补发）自动跳过。
+3. 源码里提交仓库根 `.cargo/config.toml`（只有 index 无凭证）——本 workflow 会确保它存在，消费方克隆即用。
+
+**如何使用**（某仓库）：
+
+1. 满足上面对应生态的前提（cargo：依赖写 version+registry；npm：包名带 scope；pypi：`pyproject.toml` 在 `pypi-working-directory`）。
+2. 加 caller stub：Actions -> New workflow -> 搜 "Publish to repsy" -> 采用；或手动新建 `.github/workflows/repsy-publish.yml`，按仓库形态裁剪（下例三端全开，单形态仓库删掉不用的开关）：
+   ```yaml
+   name: repsy-publish
+   on:
+     push:
+       tags: ['v*']
+     workflow_dispatch:
+   permissions:
+     contents: read
+   jobs:
+     repsy:
+       uses: nsfintech/.github/.github/workflows/repsy-publish.yml@v1
+       with:
+         publish-cargo: true
+         cargo-publish-crates: rslog-core,rslog
+         publish-npm: true
+         npm-scope: nsfintech
+         npm-working-directory: node
+         npm-build-command: |
+           npm ci
+           npm run build
+         publish-pypi: true
+         pypi-working-directory: python
+   ```
+3. release-please 合并 release PR -> 自动打 `v*` tag -> 本 workflow 触发：rc tag 发预发布包、stable tag 发正式包。手动补发：给目标 commit 打 tag 推送，或 `workflow_dispatch`（要求 HEAD 恰好有 v* tag）。
+
+**注意（tag 触发的坑）**：与 docker-build-push 相同——release-please 用默认 `GITHUB_TOKEN` 打的 tag 不触发本 stub。组织模板 release-please.yml 已配 App token 推 tag（App 推的 tag 会触发下游 workflow）；未配 App 凭证时用 `workflow_dispatch` 手动发布。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `publish-cargo` | boolean | `false` | 发布 cargo crate |
+| `cargo-publish-crates` | string | 空 | 按拓扑序发布的 crate 列表（逗号分隔）；发布时逐个 `cargo publish -p --registry repsy`，重复版本跳过 |
+| `publish-npm` | boolean | `false` | 发布 npm scoped 包 |
+| `npm-scope` | string | 空 | npm scope（不带 @，如 `nsfintech`）；空则从 package.json 包名推断 |
+| `npm-working-directory` | string | `.` | npm 包目录（含 package.json） |
+| `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物）。执行前自动装 Rust toolchain（`npm-build-toolchain`） |
+| `npm-build-toolchain` | string | `stable` | `npm-build-command` 用的 Rust toolchain |
+| `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
+| `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
+
+**输出**（供下游消费）：`version`（tag 解析出的版本，如 `0.2.0` / `0.2.0-rc.1`）、`is_rc`（`"true"`/`"false"`）、`npm_tag`（`rc` / `latest`）。
+
+**已知限制**：发布物仅含 runner 所在平台（linux-x64）；darwin 产物需 macos runner 或后续本地构建补传。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。
+
 ## 权限
 
-七个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci、python-ci 与 deploy-tke 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact；docker-build-push 需 `contents: read`）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*`），不需要 GitHub secret 或 `packages: write`。**
+八个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci、python-ci、deploy-tke 与 repsy-publish 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig、repsy-publish 推私有仓库，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*` / `REPSY_*`），不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

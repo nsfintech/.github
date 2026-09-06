@@ -1,0 +1,318 @@
+# 可复用 workflow：把包发布到 repsy.io 私有制品仓库
+#
+# 支持三种生态（按需开关）：
+#   - cargo：  cargo publish --registry repsy（按拓扑序逐 crate，如 core 先于上层）
+#   - npm：    npm publish（scoped 包，rc tag 打 --tag rc、stable 打 latest）
+#   - pypi：   maturin build + twine upload（Rust 扩展包；纯 Python 包用别的构建器时
+#              自行在 publish 前置 job 构建，本 workflow 只管盖章 + 上传）
+#
+# 版本模型：与组织 release-please 分支模型对齐——
+#   test 分支 release PR 合并 -> vX.Y.Z-rc / vX.Y.Z-rc.N tag -> 本 workflow 发布【预发布包】
+#   main 分支 release PR 合并 -> vX.Y.Z tag                 -> 本 workflow 发布【正式包】
+# tag 是版本的单一事实源：发布时把 tag 盖章进三端 manifest（Cargo.toml 的
+# workspace version 已由 release-please 维护一致，此处只校验不覆盖；node/package.json
+# 与 python/pyproject.toml 现场写版本、不回填源码）。rc 的版本号写法：
+#   cargo/npm： 0.2.0-rc / 0.2.0-rc.1（semver 预发布，合法）
+#   python：    0.2.0rc0 / 0.2.0rc1（PEP 440；连字符与点后缀会被构建后端拒绝，必须转换）
+#
+# 三端消费语义（调研结论，写死在发布策略里）：
+#   - npm： rc 必须 npm publish --tag rc，否则 rc 占用 latest（npm i pkg 全装到 rc）。
+#           用户装 rc：npm i pkg@rc 或 npm i pkg@0.2.0-rc.1；装 stable：npm i pkg
+#   - pypi： 无 dist-tag 概念。pip 默认不装预发布（装 rc 需 ==0.2.0rc1 或 --pre），
+#           测试环境显式指定版本即可，无需额外通道
+#   - cargo：无 dist-tag 概念。预发布版本默认不满足任何 ^x.y.z 依赖要求，
+#           用户装 rc：cargo add pkg@=0.2.0-rc.1 --registry repsy
+#
+# 认证不走 GitHub secret（Free 组织私有仓库无 org 级 secrets）：凭证来自自托管
+# runner 的 .env，workflow 第一步桥接到 $GITHUB_ENV（add-mask 脱敏），与
+# docker-build-push 的 DOCKER_* 同一模式：
+#   REPSY_CARGO_REGISTRY    如 https://repo.repsy.io/<user>/<registry>（sparse+ 前缀由 workflow 拼）
+#   REPSY_NPM_REGISTRY      如 https://repo.repsy.io/<user>/<registry>/
+#   REPSY_PYPI_REGISTRY     如 https://repo.repsy.io/<user>/<registry>/api/pypi
+#   REPSY_CARGO_TOKEN       repsy Deploy Token（cargo 发布用；须 Deploy Token，非账号密码）
+#   REPSY_NPM_TOKEN         repsy Deploy Token（npm _authToken）
+#   REPSY_PYPI_USER/PASSWORD  repsy 用户名/密码（twine 认证；repsy pypi 侧用账号认证）
+#   （未开对应生态时只校验所需变量，缺了报 ::error 指明去 runner .env 补）
+#
+# 调用方 stub 见 workflow-templates/repsy-publish.yml。
+name: repsy-publish (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      # ── 三端开关（默认全关，caller 按仓库形态开）──────────────────────────
+      publish-cargo:
+        description: '发布 cargo crate 到 repsy（拓扑序 = cargo-publish-crates 输入顺序）'
+        type: boolean
+        default: false
+      publish-npm:
+        description: '发布 npm 包到 repsy（scoped 包）'
+        type: boolean
+        default: false
+      publish-pypi:
+        description: '发布 python 包到 repsy（maturin 构建 Rust 扩展 wheel + twine 上传）'
+        type: boolean
+        default: false
+
+      # ── cargo ─────────────────────────────────────────────────────────
+      cargo-publish-crates:
+        description: '按拓扑序发布的 crate 列表（逗号分隔，如 rslog-core,rslog）；workspace 内部依赖须写 version + registry = "repsy"（path 仅本地开发生效，发布时自动重写指向本 registry）。同版本已存在时跳过（重跑/补发场景）'
+        type: string
+        default: ''
+
+      # ── npm ──────────────────────────────────────────────────────────
+      npm-scope:
+        description: 'npm scope（不带 @，如 nsfintech）；registry 按 scope 路由。空则从 package.json 包名推断（无 scope 的裸包名则失败）'
+        type: string
+        default: ''
+      npm-working-directory:
+        description: 'npm 包目录（含 package.json）'
+        type: string
+        default: '.'
+      npm-build-command:
+        description: 'npm publish 前在 runner 上执行的构建命令（多行；如编译 .node 产物）。执行前自动装 Rust toolchain（npm-build-toolchain）'
+        type: string
+        default: ''
+      npm-build-toolchain:
+        description: 'npm-build-command 用的 Rust toolchain（默认 stable）'
+        type: string
+        default: 'stable'
+
+      # ── pypi ─────────────────────────────────────────────────────────
+      pypi-working-directory:
+        description: 'python 包目录（含 pyproject.toml，version 为静态字段）'
+        type: string
+        default: '.'
+      pypi-build-toolchain:
+        description: 'maturin 构建用的 Rust toolchain（默认 stable）'
+        type: string
+        default: 'stable'
+
+    outputs:
+      version:
+        description: '从 tag 解析出的版本（如 0.2.0 或 0.2.0-rc.1）'
+        value: ${{ jobs.publish.outputs.version }}
+      is_rc:
+        description: '是否预发布（"true"/"false"）'
+        value: ${{ jobs.publish.outputs.is_rc }}
+      npm_tag:
+        description: 'npm dist-tag（rc 或 latest）；仅 publish-npm 时有意义'
+        value: ${{ jobs.publish.outputs.npm_tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: [self-hosted, linux]
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      is_rc: ${{ steps.tag.outputs.is_rc }}
+      npm_tag: ${{ steps.tag.outputs.npm_tag }}
+    steps:
+      # fetch-depth 0：workflow_dispatch 路径要用 git describe --exact-match 找 HEAD 上的 tag
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 0. 解析 tag：v0.2.0-rc.1 -> version=0.2.0-rc.1 / is_rc=true ──────
+      # release-please 的首个 rc 无编号（vX.Y.Z-rc），后续递增（-rc.2...），两种都要认。
+      # workflow_dispatch（无 tag 事件）：用 git describe 从 HEAD 找 tag，要求恰好
+      # 打在 HEAD 上，防止 dispatch 时把旧 tag 重复发布。
+      - name: 解析 tag 与通道
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+            if [ -z "$tag" ]; then
+              echo "::error::workflow_dispatch 需要 HEAD 恰好打了 v* tag（git describe --exact-match 为空）。请走 tag push 触发，或先给当前 commit 打 tag 再 dispatch"
+              exit 1
+            fi
+          fi
+          case "$tag" in
+            v[0-9]*) : ;;
+            *) echo "::error::非 semver tag: $tag（应为 vX.Y.Z 或 vX.Y.Z-rc[.N]）"; exit 1 ;;
+          esac
+          version="${tag#v}"
+          case "$version" in
+            *-rc|*-rc.*) is_rc=true;  npm_tag=rc ;;
+            *)            is_rc=false; npm_tag=latest ;;
+          esac
+          {
+            echo "version=$version"
+            echo "is_rc=$is_rc"
+            echo "npm_tag=$npm_tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "版本=$version 预发布=$is_rc npm dist-tag=$npm_tag"
+
+      # ── 1. 载入 repsy 凭证（runner .env -> GITHUB_ENV + 脱敏）──────────
+      # 与 docker-build-push 的 DOCKER_* 同一桥接模式：runner .env 变量只在
+      # run 步骤 shell 可见，桥接后后续步骤的 env: 才能用 ${{ env.* }}。
+      - name: 载入 repsy 凭证（runner .env）
+        run: |
+          set -euo pipefail
+          need() {  # need <开关> <变量名>...（开关非 true 则跳过校验）
+            local enabled="$1"; shift
+            if [ "$enabled" != "true" ]; then return 0; fi
+            for v in "$@"; do
+              if [ -z "${!v:-}" ]; then
+                echo "::error::runner .env 缺少 $v（自托管 runner .env 补齐后重启 runner）"
+                exit 1
+              fi
+            done
+          }
+          need "${{ inputs.publish-cargo }}" REPSY_CARGO_REGISTRY REPSY_CARGO_TOKEN
+          need "${{ inputs.publish-npm }}"   REPSY_NPM_REGISTRY   REPSY_NPM_TOKEN
+          need "${{ inputs.publish-pypi }}"  REPSY_PYPI_REGISTRY  REPSY_PYPI_USER REPSY_PYPI_PASSWORD
+          for v in REPSY_CARGO_TOKEN REPSY_NPM_TOKEN REPSY_PYPI_USER REPSY_PYPI_PASSWORD; do
+            if [ -n "${!v:-}" ]; then echo "::add-mask::${!v}"; fi
+          done
+          for v in REPSY_CARGO_REGISTRY REPSY_NPM_REGISTRY REPSY_PYPI_REGISTRY REPSY_CARGO_TOKEN REPSY_NPM_TOKEN REPSY_PYPI_USER REPSY_PYPI_PASSWORD; do
+            if [ -n "${!v:-}" ]; then echo "$v=${!v}" >> "$GITHUB_ENV"; fi
+          done
+
+      # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
+      # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、
+      # 无凭证；消费方克隆即用）。token 走 CARGO_REGISTRIES_REPSY_TOKEN 环境变量，
+      # 不落盘。实验验证：path+version+registry 依赖本地开发零影响（path 优先），
+      # cargo package 自动把 path 依赖重写为指向本 registry 的 registry 依赖。
+      - name: 写 cargo registry 配置
+        if: ${{ inputs.publish-cargo }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<EOF
+          [registries.repsy]
+          index = "sparse+${REPSY_CARGO_REGISTRY%/}/"
+          EOF
+          cat .cargo/config.toml
+
+      - name: 校验 Cargo 版本与 tag 一致
+        if: ${{ inputs.publish-cargo }}
+        run: |
+          set -euo pipefail
+          ws="$(grep -m1 '^version' Cargo.toml | tr -d ' "' | cut -d= -f2)"
+          if [ "$ws" != "${{ steps.tag.outputs.version }}" ]; then
+            echo "::error::Cargo.toml version=$ws 与 tag ${{ steps.tag.outputs.version }} 不一致（release-please 合并 release PR 后才会 bump 并打 tag；请确认触发来源）"
+            exit 1
+          fi
+
+      - name: cargo publish（拓扑序；同版本已存在则跳过）
+        if: ${{ inputs.publish-cargo }}
+        env:
+          CARGO_REGISTRIES_REPSY_TOKEN: ${{ env.REPSY_CARGO_TOKEN }}
+        run: |
+          set -euo pipefail
+          crates="${{ inputs.cargo-publish-crates }}"
+          if [ -z "$crates" ]; then
+            echo "::error::publish-cargo=true 但 cargo-publish-crates 为空（按依赖拓扑序列出要发布的 crate，逗号分隔）"
+            exit 1
+          fi
+          ver="${{ steps.tag.outputs.version }}"
+          for c in ${crates//,/ }; do
+            echo "── cargo publish -p $c"
+            log="$RUNNER_TEMP/publish-$c.log"
+            if cargo publish -p "$c" --registry repsy --allow-dirty >"$log" 2>&1; then
+              tail -2 "$log"
+            else
+              code=$?
+              cat "$log"
+              # 重跑/补发场景：同版本已存在（repsy/crates.io 风格报错）不算失败
+              if grep -qiE 'already exists|duplicate (version|file)|409' "$log"; then
+                echo "::notice::$c@$ver 已存在于 repsy，跳过"
+              else
+                exit "$code"
+              fi
+            fi
+          done
+
+      # ── 3. npm：构建 + 发布（rc 打 --tag rc）─────────────────────────────
+      - name: 装 Rust toolchain（npm 构建用）
+        if: ${{ inputs.publish-npm && inputs.npm-build-command != '' }}
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.npm-build-toolchain }}
+
+      - name: 执行 npm 构建命令
+        if: ${{ inputs.publish-npm && inputs.npm-build-command != '' }}
+        working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
+        shell: bash
+        run: ${{ inputs.npm-build-command }}
+
+      - name: 盖章 npm 版本 + 写 .npmrc + 发布
+        if: ${{ inputs.publish-npm }}
+        working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
+        run: |
+          set -euo pipefail
+          ver="${{ steps.tag.outputs.version }}"
+          # 版本盖章（tag 是单一事实源；不回填源码，不 git tag）
+          npm version --no-git-tag-version --allow-same-version "$ver"
+          # scope：输入优先，否则从包名推断（@scope/name）；裸包名不支持（repsy npm 仅 scoped）
+          if [ -n "${{ inputs.npm-scope }}" ]; then
+            scope="@${{ inputs.npm-scope }}"
+          else
+            name="$(node -p "require('./package.json').name")"
+            case "$name" in
+              @*/*) scope="${name%%/*}" ;;
+              *) echo "::error::包名 $name 无 scope，且未传 npm-scope（repsy npm registry 仅支持 scoped 包）"; exit 1 ;;
+            esac
+          fi
+          host="${REPSY_NPM_REGISTRY#https://}"
+          {
+            echo "${scope}:registry=${REPSY_NPM_REGISTRY%/}/"
+            echo "//${host%/}/:_authToken=${REPSY_NPM_TOKEN}"
+          } > .npmrc
+          pkg="$(node -p "require('./package.json').name")"
+          # 重跑/补发：同版本已存在则跳过
+          if [ -n "$(npm view "${pkg}@${ver}" version 2>/dev/null)" ]; then
+            echo "::notice::$pkg@$ver 已存在于 repsy，跳过（npm dist-tag 不动）"
+          else
+            npm publish --tag "${{ steps.tag.outputs.npm_tag }}"
+          fi
+          rm -f .npmrc
+
+      # ── 4. pypi：maturin 构建 + twine 上传（rc 转 PEP 440）───────────────
+      # maturin 需要 Rust toolchain；uv/twine 用 uv tool 装（runner 预装 uv，缺了也兜底装）。
+      # twine 认证走环境变量（TWINE_USERNAME/TWINE_PASSWORD/TWINE_REPOSITORY_URL），
+      # 不落 .pypirc（官方 CI 推荐方式）；--skip-existing 让重跑/补发不因同版本报错。
+      - name: 装 Rust toolchain（maturin 构建用）
+        if: ${{ inputs.publish-pypi }}
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.pypi-build-toolchain }}
+
+      - name: 装 twine（uv tool）
+        if: ${{ inputs.publish-pypi }}
+        run: |
+          set -euo pipefail
+          command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+          command -v twine >/dev/null 2>&1 || uv tool install twine
+          command -v twine
+
+      - name: 盖章 python 版本 + maturin 构建 + twine 上传
+        if: ${{ inputs.publish-pypi }}
+        working-directory: ${{ github.workspace }}/${{ inputs.pypi-working-directory }}
+        env:
+          # runner 全局 VIRTUAL_ENV 怪癖（曾指向仓库根）——显式置空防 maturin 用错解释器
+          VIRTUAL_ENV: ''
+          TWINE_USERNAME: ${{ env.REPSY_PYPI_USER }}
+          TWINE_PASSWORD: ${{ env.REPSY_PYPI_PASSWORD }}
+          TWINE_REPOSITORY_URL: ${{ env.REPSY_PYPI_REGISTRY }}
+          TWINE_NON_INTERACTIVE: '1'
+        run: |
+          set -euo pipefail
+          ver="${{ steps.tag.outputs.version }}"
+          # tag -> PEP 440：0.2.0-rc.1 -> 0.2.0rc1；0.2.0-rc -> 0.2.0rc0（无编号补 0）
+          pyver="$(printf '%s' "$ver" | perl -pe 's/-((?:rc|a|b|dev))\.?(\d*)$/$1.($2||0)/e')"
+          echo "python 版本=$pyver"
+          perl -0pi -e "s/^version\s*=.*/version = \"$pyver\"/m" pyproject.toml
+          grep -n '^version' pyproject.toml
+          echo '::group::maturin build'
+          uvx maturin build --release --out dist
+          echo '::endgroup::'
+          twine check dist/*
+          twine upload --skip-existing --non-interactive dist/*
+          rm -rf dist
