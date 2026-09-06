@@ -190,6 +190,11 @@ jobs:
           EOF
           cat .cargo/config.toml
 
+      # rc 的坑（semver 规则）：prerelease 版本不满足任何 ^x.y.z 要求——release-please
+      # 只 bump workspace.package.version，不改写 [workspace.dependencies] 里的内部依赖
+      # version 键，rc 时两者错位（0.1.0 vs 0.2.0-rc），cargo 直接拒绝构建。发布前把
+      # workspace 内部依赖的 version 改写为 tag 版本并精确 pin（=X.Y.Z[rcN]，lockstep，
+      # 避免 cargo 在 registry 里解析到别的 0.x 版本）。只改本次要发布/已发布的 crate。
       - name: 校验 Cargo 版本与 tag 一致
         if: ${{ inputs.publish-cargo }}
         run: |
@@ -199,6 +204,30 @@ jobs:
             echo "::error::Cargo.toml version=$ws 与 tag ${{ steps.tag.outputs.version }} 不一致（release-please 合并 release PR 后才会 bump 并打 tag；请确认触发来源）"
             exit 1
           fi
+
+      - name: 同步 workspace 内部依赖版本（rc 错位修正）
+        if: ${{ inputs.publish-cargo }}
+        run: |
+          set -euo pipefail
+          ver="${{ steps.tag.outputs.version }}"
+          crates="${{ inputs.cargo-publish-crates }}"
+          # 把 [workspace.dependencies] 里属于发布列表的 crate 的 version 键改写为 =ver（lockstep）。
+          # 匹配限定在 [workspace.dependencies] 节内；用 heredoc 传 perl 脚本避免 shell 转义地狱。
+          for c in ${crates//,/ }; do
+            cat > "$RUNNER_TEMP/pin-dep.pl" <<'PERLEOF'
+          my ($c, $v) = @ENV{qw(PERL_REPLACE_CRATE PERL_REPLACE_VER)};
+          my $q = quotemeta $c;
+          my $pin = '"' . '=' . $v . '"';
+          if (s!(\[workspace\.dependencies\][^\[]*?\b$q\s*=\s*\{[^}]*?version\s*=\s*)"[^"]*"!$1.$pin!se) {
+            print STDERR "pinned $c -> =$v\n";
+          } else {
+            print STDERR "::warning::[workspace.dependencies] 里没找到 $c 的 version 键(若依赖不在此节请手动改写)";
+          }
+          PERLEOF
+            PERL_REPLACE_CRATE="$c" PERL_REPLACE_VER="$ver" perl -0pi "$RUNNER_TEMP/pin-dep.pl" Cargo.toml
+          done
+          grep -n -A3 '^\[workspace.dependencies\]' Cargo.toml
+          git diff --stat -- Cargo.toml || true
 
       - name: cargo publish（拓扑序；同版本已存在则跳过）
         if: ${{ inputs.publish-cargo }}
