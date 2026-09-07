@@ -1,0 +1,46 @@
+# starter 模板：组织内各仓库在 Actions 标签页 "New workflow" 选 "Publish to repsy
+# (cargo/npm/pypi)" 后，本文件被复制到该仓库的 .github/workflows/repsy-publish.yml，
+# 成为「调用方 stub」。
+#
+# 触发时机：
+#   - push v* tag（release-please 合并 release PR 后自动打 tag -> 触发）：
+#       test 分支的 rc tag（vX.Y.Z-rc.N）发布预发布包（npm 打 dist-tag rc）
+#       main 分支的 stable tag（vX.Y.Z）发布正式包（npm 打 dist-tag latest）
+#   - workflow_dispatch（手动）：HEAD 恰好打了 v* tag 时可重跑（重复版本会跳过）
+#
+# 注意（tag 触发的坑，与 docker-build-push 相同）：release-please 用默认 GITHUB_TOKEN
+# 打的 tag 不会触发本 stub 的 on: push: tags。组织模板 release-please.yml 已配
+# GitHub App token 推 tag（App 推的 tag 会触发下游 workflow）；老仓库若未配 App
+# 凭证，用 workflow_dispatch 手动发布。
+#
+# 认证不传 secrets：凭证来自自托管 runner 的 .env（REPSY_*，见 nsfintech/.github
+# README「repsy-publish」章节），在可复用 workflow 里读取并脱敏。
+#
+# 下面 with: 按 rslog 形态预填（Rust workspace + napi node 包 + maturin python 包，
+# 三端同版本）；单形态仓库删掉不用的开关与目录输入即可。cargo 发布的 crate 按依赖
+# 拓扑序列出（core 在前），且 workspace 内部依赖须写 version + registry = "repsy"
+# （path 仅本地开发生效，发布时自动重写指向本 registry）。
+name: repsy-publish
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repsy:
+    uses: nsfintech/.github/.github/workflows/repsy-publish.yml@v1
+    with:
+      publish-cargo: true
+      cargo-publish-crates: rslog-core,rslog
+      publish-npm: true
+      npm-scope: nsfintech
+      npm-working-directory: node
+      npm-build-command: |
+        npm ci
+        npm run build
+      publish-pypi: true
+      pypi-working-directory: python
+    # 无需 secrets: inherit -- 凭证来自 runner .env，不是 GitHub secret

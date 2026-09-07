@@ -1,0 +1,4 @@
+{
+  "name": "Publish to repsy (cargo/npm/pypi)",
+  "description": "把包发布到 repsy.io 私有制品仓库（cargo crate / npm scoped 包 / pypi wheel 三端按需开关）。release-please 打 v* tag 时触发：rc tag 发预发布包（npm 打 dist-tag rc），stable tag 发正式包（latest）。调用 nsfintech/.github 的可复用 workflow，凭证来自自托管 runner .env（非 GitHub secret）。"
+}
