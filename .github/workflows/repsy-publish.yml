@@ -54,6 +54,12 @@ on:
         type: boolean
         default: false
 
+      # ── 公共 ─────────────────────────────────────────────────────
+      rust-toolchain:
+        description: 'Rust toolchain channel（stable/beta/nightly 或具体版本；cargo publish / npm napi 构建 / maturin 构建三段共用）'
+        type: string
+        default: 'stable'
+
       # ── cargo ─────────────────────────────────────────────────────────
       cargo-publish-crates:
         description: '按拓扑序发布的 crate 列表（逗号分隔，如 rslog-core,rslog）；workspace 内部依赖须写 version + registry = "repsy"（path 仅本地开发生效，发布时自动重写指向本 registry）。同版本已存在时跳过（重跑/补发场景）'
@@ -70,23 +76,15 @@ on:
         type: string
         default: '.'
       npm-build-command:
-        description: 'npm publish 前在 runner 上执行的构建命令（多行；如编译 .node 产物）。执行前自动装 Rust toolchain（npm-build-toolchain）'
+        description: 'npm publish 前在 runner 上执行的构建命令（多行；如编译 .node 产物，需要 cargo 的场景共用 rust-toolchain 装的 toolchain）'
         type: string
         default: ''
-      npm-build-toolchain:
-        description: 'npm-build-command 用的 Rust toolchain（默认 stable）'
-        type: string
-        default: 'stable'
 
       # ── pypi ─────────────────────────────────────────────────────────
       pypi-working-directory:
         description: 'python 包目录（含 pyproject.toml，version 为静态字段）'
         type: string
         default: '.'
-      pypi-build-toolchain:
-        description: 'maturin 构建用的 Rust toolchain（默认 stable）'
-        type: string
-        default: 'stable'
 
     outputs:
       version:
@@ -173,6 +171,16 @@ jobs:
           for v in REPSY_CARGO_REGISTRY REPSY_NPM_REGISTRY REPSY_PYPI_REGISTRY REPSY_CARGO_TOKEN REPSY_NPM_TOKEN REPSY_PYPI_USER REPSY_PYPI_PASSWORD; do
             if [ -n "${!v:-}" ]; then echo "$v=${!v}" >> "$GITHUB_ENV"; fi
           done
+
+      # ── 1.5 公共环境：Rust toolchain ──────────────────────────────────
+      # cargo publish / npm napi 构建 / maturin 构建三段共用同一 toolchain
+      # （rust-toolchain 输入，默认 stable）。教训：首版 cargo 段裸跑 cargo、
+      # 只在 npm/pypi 段各装一次,发布 job 干净环境 cargo not found。
+      - name: 装 Rust toolchain
+        if: ${{ inputs.publish-cargo || inputs.publish-npm || inputs.publish-pypi }}
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
 
       # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
       # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、
@@ -271,12 +279,6 @@ jobs:
           done
 
       # ── 3. npm：构建 + 发布（rc 打 --tag rc）─────────────────────────────
-      - name: 装 Rust toolchain（npm 构建用）
-        if: ${{ inputs.publish-npm && inputs.npm-build-command != '' }}
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ inputs.npm-build-toolchain }}
-
       - name: 执行 npm 构建命令
         if: ${{ inputs.publish-npm && inputs.npm-build-command != '' }}
         working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
@@ -316,15 +318,9 @@ jobs:
           rm -f .npmrc
 
       # ── 4. pypi：maturin 构建 + twine 上传（rc 转 PEP 440）───────────────
-      # maturin 需要 Rust toolchain；uv/twine 用 uv tool 装（runner 预装 uv，缺了也兜底装）。
+      # maturin 用的 Rust toolchain 已在公共 setup 装好；uv/twine 用 uv tool 装（runner 预装 uv，缺了也兜底装）。
       # twine 认证走环境变量（TWINE_USERNAME/TWINE_PASSWORD/TWINE_REPOSITORY_URL），
       # 不落 .pypirc（官方 CI 推荐方式）；--skip-existing 让重跑/补发不因同版本报错。
-      - name: 装 Rust toolchain（maturin 构建用）
-        if: ${{ inputs.publish-pypi }}
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ inputs.pypi-build-toolchain }}
-
       - name: 装 twine（uv tool）
         if: ${{ inputs.publish-pypi }}
         run: |
