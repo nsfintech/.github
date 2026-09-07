@@ -177,8 +177,14 @@ jobs:
       # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
       # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、
       # 无凭证；消费方克隆即用）。token 走 CARGO_REGISTRIES_REPSY_TOKEN 环境变量，
-      # 不落盘。实验验证：path+version+registry 依赖本地开发零影响（path 优先），
-      # cargo package 自动把 path 依赖重写为指向本 registry 的 registry 依赖。
+      # 不落盘。
+      #
+      # 依赖契约：树内 [workspace.dependencies] 保持纯 path 依赖（不带 version/registry
+      # 键）。原因（rslog 实测）：release-please 只 bump workspace.package.version，
+      # 不改写内部依赖的 version 键——若树内常驻 version 键，rc（及跨 0.x minor）时
+      # 错位（^0.1.0 vs 0.2.0-rc），semver 规则下 prerelease/跨 minor 不匹配，release
+      # PR 自己的 CI 全红。发布时由下一步现场注入 path+version+registry：本地开发
+      # path 优先零影响，cargo package 自动重写为 registry 依赖（实验验证）。
       - name: 写 cargo registry 配置
         if: ${{ inputs.publish-cargo }}
         run: |
@@ -190,11 +196,10 @@ jobs:
           EOF
           cat .cargo/config.toml
 
-      # rc 的坑（semver 规则）：prerelease 版本不满足任何 ^x.y.z 要求——release-please
-      # 只 bump workspace.package.version，不改写 [workspace.dependencies] 里的内部依赖
-      # version 键，rc 时两者错位（0.1.0 vs 0.2.0-rc），cargo 直接拒绝构建。发布前把
-      # workspace 内部依赖的 version 改写为 tag 版本并精确 pin（=X.Y.Z[rcN]，lockstep，
-      # 避免 cargo 在 registry 里解析到别的 0.x 版本）。只改本次要发布/已发布的 crate。
+      # 注入发布契约：把发布列表内 crate 的 workspace 依赖整行改写为
+      # path + version(=tag 精确 pin,lockstep) + registry。树内纯 path,
+      # 版本单一事实源是 tag;=pin 避免 cargo 在 repsy 里解析到其它 0.x 版本。
+      # 先发布拓扑序前面的 crate,后面的 crate 打包时才能在 index 里找到前者。
       - name: 校验 Cargo 版本与 tag 一致
         if: ${{ inputs.publish-cargo }}
         run: |
@@ -205,26 +210,28 @@ jobs:
             exit 1
           fi
 
-      - name: 同步 workspace 内部依赖版本（rc 错位修正）
+      - name: 注入 workspace 内部依赖的 version/registry 键（发布契约）
         if: ${{ inputs.publish-cargo }}
         run: |
           set -euo pipefail
           ver="${{ steps.tag.outputs.version }}"
           crates="${{ inputs.cargo-publish-crates }}"
-          # 把 [workspace.dependencies] 里属于发布列表的 crate 的 version 键改写为 =ver（lockstep）。
-          # 匹配限定在 [workspace.dependencies] 节内；用 heredoc 传 perl 脚本避免 shell 转义地狱。
+          # 把 [workspace.dependencies] 里属于发布列表的 crate 依赖整行改写为:
+          # <crate> = { path = "<原path>", version = "=ver", registry = "repsy" }
+          # 匹配限定在 [workspace.dependencies] 节内;heredoc 传 perl 避免 shell 转义。
           for c in ${crates//,/ }; do
-            cat > "$RUNNER_TEMP/pin-dep.pl" <<'PERLEOF'
-          my ($c, $v) = @ENV{qw(PERL_REPLACE_CRATE PERL_REPLACE_VER)};
+            cat > "$RUNNER_TEMP/inject-dep.pl" <<'PERLEOF'
+          my ($c, $v) = @ENV{qw(PERL_INJECT_CRATE PERL_INJECT_VER)};
           my $q = quotemeta $c;
-          my $pin = '"' . '=' . $v . '"';
-          if (s!(\[workspace\.dependencies\][^\[]*?\b$q\s*=\s*\{[^}]*?version\s*=\s*)"[^"]*"!$1.$pin!se) {
-            print STDERR "pinned $c -> =$v\n";
+          my $newline = "$c = { path = %s, version = \"=$v\", registry = \"repsy\" }";
+          if (s!^(\[workspace\.dependencies\][^\[]*?^\s*$q\s*=\s*\{\s*path\s*=\s*)("[^"]*")(.*?)\s*\}!$1 . $2 . sprintf(", version = \"=$v\", registry = \"repsy\"") . " }"!mse) {
+            print STDERR "injected $c -> =$v @repsy\n";
           } else {
-            print STDERR "::warning::[workspace.dependencies] 里没找到 $c 的 version 键(若依赖不在此节请手动改写)";
+            print STDERR "::error::[workspace.dependencies] 里没找到 $c 的 path 依赖行(要求树内为纯 path 依赖)";
+            exit 1;
           }
           PERLEOF
-            PERL_REPLACE_CRATE="$c" PERL_REPLACE_VER="$ver" perl -0pi "$RUNNER_TEMP/pin-dep.pl" Cargo.toml
+            PERL_INJECT_CRATE="$c" PERL_INJECT_VER="$ver" perl -0pi "$RUNNER_TEMP/inject-dep.pl" Cargo.toml
           done
           grep -n -A3 '^\[workspace.dependencies\]' Cargo.toml
           git diff --stat -- Cargo.toml || true

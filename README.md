@@ -538,13 +538,13 @@ REPSY_PYPI_PASSWORD=<密码>
 
 **cargo 多 crate workspace 前提**（实验验证过的契约）：
 
-1. workspace 内部依赖须同时写 `version` + `registry = "repsy"`（`path` 保留——本地开发 path 优先零影响，不配凭证也能 build/test）；`cargo package` 会自动重写为指向本 registry 的依赖。
+1. workspace 内部依赖在**树内保持纯 `path` 依赖**（不带 `version`/`registry` 键）。原因（rslog 实测）：release-please 只 bump `workspace.package.version`，不改写内部依赖 version 键——树内常驻 version 键时 rc（及跨 0.x minor）错位，semver 不匹配，release PR 自己的 CI 全红。发布时由 workflow 现场注入 `path + version(=tag 精确 pin) + registry`，本地开发 path 优先零影响，`cargo package` 自动重写为 registry 依赖。
 2. 要发布的 crate 按**拓扑序**传给 `cargo-publish-crates`（如 `rslog-core,rslog`，core 在前），workflow 逐个 `cargo publish -p`。重复版本（重跑/补发）自动跳过。
-3. 源码里提交仓库根 `.cargo/config.toml`（只有 index 无凭证）——本 workflow 会确保它存在，消费方克隆即用。
+3. 源码里提交仓库根 `.cargo/config.toml`（只有 index 无凭证）——本 workflow 发布时会覆盖写为 env 提供的地址，消费方克隆即用。
 
 **如何使用**（某仓库）：
 
-1. 满足上面对应生态的前提（cargo：依赖写 version+registry；npm：包名带 scope；pypi：`pyproject.toml` 在 `pypi-working-directory`）。
+1. 满足上面对应生态的前提（cargo：内部依赖纯 path；npm：包名带 scope；pypi：`pyproject.toml` 在 `pypi-working-directory`）。
 2. 加 caller stub：Actions -> New workflow -> 搜 "Publish to repsy" -> 采用；或手动新建 `.github/workflows/repsy-publish.yml`，按仓库形态裁剪（下例三端全开，单形态仓库删掉不用的开关）：
    ```yaml
    name: repsy-publish
