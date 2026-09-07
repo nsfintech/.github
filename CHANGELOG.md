@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/nsfintech/.github/compare/v1.11.0...v1.12.0) (2026-09-07)
+
+
+### Features
+
+* 新增 pg-rust-tests 可复用 workflow 与 starter 模板 ([#37](https://github.com/nsfintech/.github/issues/37)) ([d965fd9](https://github.com/nsfintech/.github/commit/d965fd9335c1fc25262ff259a54beff7b912d7a2))
+
 ## [1.11.0](https://github.com/nsfintech/.github/compare/v1.10.0...v1.11.0) (2026-09-07)
 
 
