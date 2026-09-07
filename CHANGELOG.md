@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/nsfintech/.github/compare/v1.10.0...v1.11.0) (2026-09-07)
+
+
+### Features
+
+* 新增 repsy-publish 可复用 workflow 与 starter 模板 ([#35](https://github.com/nsfintech/.github/issues/35)) ([c74c896](https://github.com/nsfintech/.github/commit/c74c896891684f0e0688e37db44ebbf2eebe3629))
+
 ## [1.10.0](https://github.com/nsfintech/.github/compare/v1.9.1...v1.10.0) (2026-09-02)
 
 
