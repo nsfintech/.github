@@ -18,8 +18,8 @@
 #
 # 下面 with: 按 rslog 形态预填（Rust workspace + napi node 包 + maturin python 包，
 # 三端同版本）；单形态仓库删掉不用的开关与目录输入即可。cargo 发布的 crate 按依赖
-# 拓扑序列出（core 在前），且 workspace 内部依赖须写 version + registry = "repsy"
-# （path 仅本地开发生效，发布时自动重写指向本 registry）。
+# 拓扑序列出（core 在前）；workspace 内部依赖树内保持纯 path（版本单一事实源是
+# tag），发布时由模板注入 version(=tag 精确 pin) + registry 键。
 name: repsy-publish
 on:
   push:
