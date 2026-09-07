@@ -266,6 +266,78 @@ jobs:
 | `artifact-name` | string | `''` | 构建产物 artifact 名；空则不上传 |
 | `artifact-path` | string | `dist` | 构建产物路径，相对 `working-directory` |
 
+### pg-rust-tests：Rust 测试（PostgreSQL service 容器）
+
+rust-ci 刻意不含测试（测试形态因项目而异）；本模板补上最常见的一种：**集成测试需要真实 PostgreSQL**。job 级起 `postgres:<version>` service 容器（`pg_isready` 健康检查通过才开始跑测试），把连接串注入调用方指定的环境变量，执行调用方的 test 命令。
+
+**与 rust-ci 的分工**：rust-ci = 门禁（fmt/clippy/deny，不含测试）；pg-rust-tests = cargo test（+ 可选前置准备）。两者并行不冲突，调用方各配各的 stub。
+
+文件：可复用 workflow [`pg-rust-tests.yml`](.github/workflows/pg-rust-tests.yml) / starter 模板 [`workflow-templates/pg-rust-tests.yml`](workflow-templates/pg-rust-tests.yml)。
+
+**模板只固化「起 PG + 注入连接串 + 跑测试命令」，不固化测试内部的 fixture 设计**（每测试独立库 / 共享库 + TRUNCATE 是 per-repo 决策）。参考实现：`nsfintech/rsflow` 的 `rsflow_db::testsupport::pg_test_db()`——用测试线程名建一次性数据库（并行安全），迁移后返回 backend；环境变量未设时直接 panic 而不是静默跳过（静默跳过的测试套件是「绿灯谎言」，跑着跑着就没人发现它从没跑过）。
+
+**runner 说明**：service 容器要求 runner 宿主机有 docker。默认 `ubuntu-latest`（GitHub 托管，吃公共配额）；确认自己的 self-hosted runner 装了 docker 后，传 `runner-labels: '[self-hosted, linux]'` 改跑自托管。
+
+**如何使用**（某 Rust 仓库）：
+
+1. 测试代码从环境变量读连接串（如 `RSFLOW_PG_TEST_URL`），未设时 fail loud；推荐每测试建一次性库（参考 rsflow 的 testsupport）。
+2. 加 caller stub：Actions -> New workflow -> 搜 "PostgreSQL Tests" -> 采用；或手动新建 `.github/workflows/pg-tests.yml`：
+   ```yaml
+   name: pg-tests
+   on:
+     push:
+       branches: [main]
+     pull_request:
+   permissions:
+     contents: read
+   jobs:
+     pg-tests:
+       uses: nsfintech/.github/.github/workflows/pg-rust-tests.yml@v1
+       with:
+         env-name: RSFLOW_PG_TEST_URL
+       secrets: inherit
+   ```
+3. 推 main 或开 PR，postgres service 容器就绪后跑 `cargo test --workspace --all-targets`。
+
+可配置项（`with:`）：
+
+| 输入 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `toolchain` | string | `stable` | Rust toolchain channel |
+| `pg-version` | string | `17` | PostgreSQL 镜像版本（15 / 16 / 17） |
+| `env-name` | string | `DATABASE_URL` | 注入连接串的环境变量名（测试代码读它） |
+| `test-command` | string | `''` | 测试命令；空则默认 `cargo test --workspace --all-targets` |
+| `setup-command` | string | `''` | 测试前准备命令（可选，如前端 dist 构建）；空则跳过 |
+| `setup-working-directory` | string | `.` | `setup-command` 的工作目录 |
+| `runner-labels` | string | `ubuntu-latest` | runner 标签；service 容器需要 runner 有 docker |
+
+**前后端混合仓库（Rust 嵌入前端产物）**：rsflow 这类编译期嵌 `web/dist` 的仓库，先用 node-ci 构建上传 artifact，再 needs 串联本模板，把构建命令传给 `setup-command`（artifact 下载仍由 node-ci 上传、本模板不接管，注意 setup-command 里需自行下载或不依赖 artifact 的直接构建）：
+
+```yaml
+jobs:
+  web-build:
+    uses: nsfintech/.github/.github/workflows/node-ci.yml@v1
+    with:
+      node-version: '24'
+      working-directory: web
+      build: pnpm run build
+      artifact-name: web-dist
+      artifact-path: dist
+  pg-tests:
+    needs: web-build
+    uses: nsfintech/.github/.github/workflows/pg-rust-tests.yml@v1
+    permissions:
+      contents: read
+      actions: read
+    with:
+      env-name: RSFLOW_PG_TEST_URL
+      setup-command: pnpm install --frozen-lockfile && pnpm run build
+      setup-working-directory: web
+    secrets: inherit
+```
+
+（setup-command 里直接重构建比下载 artifact 简单直接，代价是多一次构建；若在意时长，可在 setup-command 里用 `gh` 下载 `needs` 前置 job 的 artifact。）
+
 ### python-ci：Python 质量门禁
 
 uv 项目的安装 / lint / test 统一步骤，与 node-ci / rust-ci 同一质量门禁定位。环境引入方式与 node-ci 一致——setup action（`astral-sh/setup-uv`）把 uv 装进 runner，不依赖宿主机预装；Python 本体由 `uv python install` 按 `python-version` 下载管理，也不依赖系统 Python。`uv sync --frozen` 含 dev 依赖（ruff/pytest 放 `dependency-groups.dev`），lint/test 开箱可用。
@@ -593,7 +665,7 @@ REPSY_PYPI_PASSWORD=<密码>
 
 ## 权限
 
-八个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci、python-ci、deploy-tke 与 repsy-publish 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig、repsy-publish 推私有仓库，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*` / `REPSY_*`），不需要 GitHub secret 或 `packages: write`。**
+九个 workflow 都靠 `permissions:` 键授予所需 scope（branch-cleanup 需 `contents: write` + `pull-requests: read`；release-please 需 `contents: write` + `issues: write` + `pull-requests: write`；rust-ci、node-ci、python-ci、pg-rust-tests、deploy-tke 与 repsy-publish 需 `contents: read`，rust-ci 的 clippy job 另需 `actions: read` 以取同 run 前置 job 的 artifact）。本组织默认 workflow 权限为只读，但 workflow 内显式声明 `permissions:` 即可，**无需 PAT / GitHub App**。**docker-build-push 推 TCR、deploy-tke 取 kubeconfig、repsy-publish 推私有仓库，都用 runner `.env` 里的服务级账号凭证（`DOCKER_*` / `TKE_SECRET_*` / `REPSY_*`），不需要 GitHub secret 或 `packages: write`。**
 
 **release-please 额外前提**：它用 GITHUB_TOKEN 创建 release PR，需要组织开启「Allow GitHub Actions to create and approve pull requests」（组织 Settings -> Actions -> General）。本组织已开启；若未开启，建 PR 会报 `GitHub Actions is not permitted to create or approve pull requests`，需开启该设置或改用 PAT/App token（传 `token` 输入）。
 

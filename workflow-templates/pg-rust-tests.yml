@@ -1,0 +1,26 @@
+# starter 模板:组织内各仓库在 Actions 标签页 "New workflow" 选择本模板后,GitHub
+# 会把本文件复制到该仓库的 .github/workflows/pg-rust-tests.yml,成为「调用方 stub」。
+#
+# 起一个 PostgreSQL service 容器跑 cargo test,连接串注入 RSFLOW_PG_TEST_URL
+# (改 env-name 适配你的测试代码)。适合「集成测试需要真实 PG」的 Rust 仓库,
+# 与 rust-ci(门禁)互补。
+#
+# 测试 fixture 参考:nsfintech/rsflow 的 rsflow_db::testsupport::pg_test_db()
+# —— 每测试一次性库 + 未设变量时 fail loud(不静默跳过)。
+#
+# 编译期要嵌前端产物的仓库(rust-embed):先用 node-ci 构建上传 artifact,再
+# needs 串联本模板并把构建命令传给 setup-command,见 README「前后端混合仓库」。
+name: pg-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-tests:
+    uses: nsfintech/.github/.github/workflows/pg-rust-tests.yml@v1
+    secrets: inherit

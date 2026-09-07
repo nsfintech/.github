@@ -1,0 +1,4 @@
+{
+  "name": "PostgreSQL Tests (Rust)",
+  "description": "起 PostgreSQL service 容器跑 cargo test,连接串注入指定环境变量。适合集成测试需要真实 PG 的 Rust 仓库,与 rust-ci 门禁互补。调用 nsfintech/.github 的可复用 workflow。"
+}

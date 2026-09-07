@@ -1,0 +1,98 @@
+# 可复用 workflow:Rust 测试(PostgreSQL service 容器)
+#
+# rust-ci 模板刻意不含测试;本模板补上「需要 PostgreSQL 的测试」这一形态:
+# job 级起一个 postgres service 容器(pg_isready 健康检查后才开始跑测试),
+# 把连接串注入调用方指定的环境变量,执行调用方的 test 命令。
+#
+# 与 rust-ci 的分工:
+#   - rust-ci  = 门禁(fmt/clippy/deny),不含测试,跑在 self-hosted
+#   - 本模板   = cargo test(+ 可选前置准备),需要 docker 起 service 容器
+#
+# runner 选择:service 容器要求 runner 宿主机有 docker。组织内 self-hosted
+# runner 未必装 docker,因此默认 runs-on: ubuntu-latest(GitHub 托管,配额计费);
+# 调用方确认自己的 self-hosted runner 有 docker 时,可传 runner-labels 改跑
+# self-hosted。
+#
+# 模板只固化「起 PG + 注入连接串 + 跑测试命令」,不固化测试内部的 fixture
+# 设计(每测试独立库/共享库/TRUNCATE 是 per-repo 决策)。参考实现:
+# nsfintech/rsflow 的 rsflow_db::testsupport::pg_test_db() —— 每个测试用
+# 线程名建一次性数据库,迁移后返回 backend;环境变量未设时直接 panic 而
+# 不是静默跳过(静默跳过的测试套件是「绿灯谎言」)。
+#
+# 调用方 stub 见 workflow-templates/pg-rust-tests.yml。
+name: pg-rust-tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      toolchain:
+        description: 'Rust toolchain channel(stable/beta/nightly 或具体版本)'
+        type: string
+        default: stable
+      pg-version:
+        description: 'PostgreSQL 镜像版本(如 15 / 16 / 17)'
+        type: string
+        default: '17'
+      env-name:
+        description: '注入连接串的环境变量名(测试代码读它;如 rsflow 的 RSFLOW_PG_TEST_URL)'
+        type: string
+        default: 'DATABASE_URL'
+      test-command:
+        description: '测试命令;空则默认 cargo test --workspace --all-targets'
+        type: string
+        default: ''
+      setup-command:
+        description: '测试前的准备命令(可选;如编译期嵌入前端产物的仓库先构建 dist)。空则跳过'
+        type: string
+        default: ''
+      setup-working-directory:
+        description: 'setup-command 的工作目录(相对仓库根,如 web)'
+        type: string
+        default: '.'
+      runner-labels:
+        description: 'runner 标签(默认 ubuntu-latest;service 容器需要 runner 有 docker,确认 self-hosted 有 docker 后可改 [self-hosted, linux])'
+        type: string
+        default: 'ubuntu-latest'
+
+env:
+  # 固定的测试库凭证:容器只活在本次 job,用后即弃,不构成秘密
+  PG_TEST_URL: postgres://postgres:postgres@localhost:5432/rsflow_test
+
+jobs:
+  pg-tests:
+    name: pg-tests
+    runs-on: ${{ fromJSON(format('["{0}"]', inputs.runner-labels)) }}
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:${{ inputs.pg-version }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rsflow_test
+        ports:
+          - 5432:5432
+        # 就绪判定:pg_isready 能连上才开始跑测试;~5s 间隔,上限 ~50s
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup (pre-test)
+        if: inputs.setup-command != ''
+        working-directory: ${{ inputs.setup-working-directory }}
+        run: ${{ inputs.setup-command }}
+
+      - name: cargo test
+        env:
+          ${{ inputs.env-name }}: ${{ env.PG_TEST_URL }}
+        run: ${{ inputs.test-command != '' && inputs.test-command || 'cargo test --workspace --all-targets' }}
