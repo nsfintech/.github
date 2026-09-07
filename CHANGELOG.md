@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/nsfintech/.github/compare/v1.12.1...v1.12.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* repsy-publish 加公共 Rust toolchain setup(cargo 段不再裸跑) ([#41](https://github.com/nsfintech/.github/issues/41)) ([bd118cc](https://github.com/nsfintech/.github/commit/bd118ccd6bce7378a8f8ce28b050b1e25b778449))
+
 ## [1.12.1](https://github.com/nsfintech/.github/compare/v1.12.0...v1.12.1) (2026-09-07)
 
 
