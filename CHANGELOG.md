@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/nsfintech/.github/compare/v1.12.0...v1.12.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* repsy-publish 注入对象修正 + cargo publish 跳过隔离重建 ([#39](https://github.com/nsfintech/.github/issues/39)) ([38b7139](https://github.com/nsfintech/.github/commit/38b7139886fa0814b02e6bb3740df0d02b50f1d0))
+
 ## [1.12.0](https://github.com/nsfintech/.github/compare/v1.11.0...v1.12.0) (2026-09-07)
 
 
