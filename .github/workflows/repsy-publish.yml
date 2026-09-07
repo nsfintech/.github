@@ -219,6 +219,9 @@ jobs:
           # 把 [workspace.dependencies] 里属于发布列表的 crate 依赖整行改写为:
           # <crate> = { path = "<原path>", version = "=ver", registry = "repsy" }
           # 匹配限定在 [workspace.dependencies] 节内;heredoc 传 perl 避免 shell 转义。
+          # 注入对象是【被 workspace 其它成员依赖的 crate】。发布列表里的顶层 crate
+          # (无内部依赖者)在此节无条目,属正常——notice 跳过不硬错(首版误把发布
+          # 列表当成注入列表,rslog 顶层 crate 发布直接失败)。
           for c in ${crates//,/ }; do
             cat > "$RUNNER_TEMP/inject-dep.pl" <<'PERLEOF'
           my ($c, $v) = @ENV{qw(PERL_INJECT_CRATE PERL_INJECT_VER)};
@@ -227,8 +230,7 @@ jobs:
           if (s!^(\[workspace\.dependencies\][^\[]*?^\s*$q\s*=\s*\{\s*path\s*=\s*)("[^"]*")(.*?)\s*\}!$1 . $2 . sprintf(", version = \"=$v\", registry = \"repsy\"") . " }"!mse) {
             print STDERR "injected $c -> =$v @repsy\n";
           } else {
-            print STDERR "::error::[workspace.dependencies] 里没找到 $c 的 path 依赖行(要求树内为纯 path 依赖)";
-            exit 1;
+            print STDERR "::notice::$c 在 [workspace.dependencies] 无 path 依赖行(无内部依赖者,跳过注入)";
           }
           PERLEOF
             PERL_INJECT_CRATE="$c" PERL_INJECT_VER="$ver" perl -0pi "$RUNNER_TEMP/inject-dep.pl" Cargo.toml
@@ -248,10 +250,13 @@ jobs:
             exit 1
           fi
           ver="${{ steps.tag.outputs.version }}"
+          # --no-verify:调用方发布链路已对同一 SHA 跑过 CI 门禁(needs 依赖),
+          # 跳过 publish 前的隔离重建(省每个 crate 一次全量编译;若发布流程
+          # 未接 CI 门禁的仓库请自行去掉此 flag)
           for c in ${crates//,/ }; do
             echo "── cargo publish -p $c"
             log="$RUNNER_TEMP/publish-$c.log"
-            if cargo publish -p "$c" --registry repsy --allow-dirty >"$log" 2>&1; then
+            if cargo publish -p "$c" --registry repsy --allow-dirty --no-verify >"$log" 2>&1; then
               tail -2 "$log"
             else
               code=$?
