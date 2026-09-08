@@ -201,6 +201,7 @@ jobs:
           cat > .cargo/config.toml <<EOF
           [registries.repsy]
           index = "sparse+${REPSY_CARGO_REGISTRY%/}/"
+          credential-provider = "cargo:token"
           EOF
           cat .cargo/config.toml
 
