@@ -34,7 +34,7 @@ jobs:
     uses: nsfintech/.github/.github/workflows/repsy-publish.yml@v1
     with:
       publish-cargo: true
-      cargo-publish-crates: rslog-core,rslog
+      cargo-publish-crates: rslog_core,rslog
       publish-npm: true
       npm-scope: nsfintech
       npm-working-directory: node
