@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.3](https://github.com/nsfintech/.github/compare/v1.12.2...v1.12.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* repsy cargo registry 补 credential-provider(私有 index 读取必需) ([#43](https://github.com/nsfintech/.github/issues/43)) ([44e555d](https://github.com/nsfintech/.github/commit/44e555d77ce292fc6b0456b64b7528e918de9eae))
+
 ## [1.12.2](https://github.com/nsfintech/.github/compare/v1.12.1...v1.12.2) (2026-09-07)
 
 
