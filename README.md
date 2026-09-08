@@ -657,12 +657,27 @@ REPSY_PYPI_PASSWORD=<密码>
 | `rust-toolchain` | string | `stable` | Rust toolchain（cargo publish / npm napi 构建 / maturin 构建三段共用，公共 setup 一次） |
 | `node-version` | string | `24` | npm 构建与发布用的 Node 版本（`actions/setup-node`；publish-npm 时自动 setup） |
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
+| `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。非空时自动 rustup 装各 target + 装 cargo-zigbuild（zig 锁 0.15.2，0.16 有 darwin linker bug）/cargo-xwin；pypi 段每个 target 出一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。空 = 仅本机平台 |
+| `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 是 `origin/<该分支>` 的祖先（`git merge-base --is-ancestor`），防手工 tag 绕过分支 CI 直接发布。如 `test` |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
 | `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
 
 **输出**（供下游消费）：`version`（tag 解析出的版本，如 `0.2.0` / `0.2.0-rc.1`）、`is_rc`（`"true"`/`"false"`）、`npm_tag`（`rc` / `latest`）。
 
 **已知限制**：发布物仅含 runner 所在平台（linux-x64）；darwin 产物需 macos runner 或后续本地构建补传。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。
+
+> 上述「仅 linux-x64」限制已由 `cross-targets` 解决（2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK），pypi 端每 target 一个 abi3 wheel；npm 端在 `npm-build-command` 里循环：
+>
+> ```yaml
+> npm-build-command: |
+>   npm install
+>   for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+>     npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
+>   done
+>   npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
+> ```
+>
+> 编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
 
 ## 权限
 

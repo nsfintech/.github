@@ -65,6 +65,23 @@ on:
         type: string
         default: '24'
 
+      # 交叉编译目标(rust triple,逗号分隔)。非空时:rustup 装各 target、
+      # 装 cargo-zigbuild(darwin/linux 链接)+ cargo-xwin(windows msvc 链接)。
+      # pypi 段对每个 target 出一个 abi3 wheel;npm 段产物构建在 npm-build-command
+      # 里由调用方循环(README 有示例)。zig 锁 0.15.2:0.16 有 darwin linker bug
+      # (unable to read exported symbols list,实测)。
+      cross-targets:
+        description: '交叉编译目标(逗号分隔 rust triple,如 aarch64-apple-darwin,x86_64-pc-windows-msvc);空=仅本机平台'
+        type: string
+        default: ''
+
+      # tag 血统校验:非空时要求 tag 所指 commit 是 origin/<该分支> 的祖先
+      # (git merge-base --is-ancestor),防手工 tag 绕过分支 CI 直接发布。空=不校验。
+      require-branch:
+        description: 'tag 必须在该分支历史上才允许发布(如 test);空=不校验'
+        type: string
+        default: ''
+
       # ── cargo ─────────────────────────────────────────────────────────
       cargo-publish-crates:
         description: '按拓扑序发布的 crate 列表（逗号分隔，如 rslog-core,rslog）；workspace 内部依赖须写 version + registry = "repsy"（path 仅本地开发生效，发布时自动重写指向本 registry）。同版本已存在时跳过（重跑/补发场景）'
@@ -151,6 +168,20 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "版本=$version 预发布=$is_rc npm dist-tag=$npm_tag"
 
+      # ── 0.5 tag 血统校验:发布的前提是 commit 在目标分支历史上验证过 ─────
+      # (cargo publish --no-verify 的前提也是这个)。防手工 tag 绕过分支 CI。
+      - name: 校验 tag 血统（require-branch）
+        if: ${{ inputs.require-branch != '' }}
+        run: |
+          set -euo pipefail
+          branch="${{ inputs.require-branch }}"
+          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+            echo "tag $GITHUB_REF_NAME 的 commit 是 origin/$branch 祖先 ✅"
+          else
+            echo "::error::tag $GITHUB_REF_NAME 不在 origin/$branch 历史上（手工 tag?）——发布的 commit 必须先在 $branch 分支 CI 验证过"
+            exit 1
+          fi
+
       # ── 1. 载入 repsy 凭证（runner .env -> GITHUB_ENV + 脱敏）──────────
       # 与 docker-build-push 的 DOCKER_* 同一桥接模式：runner .env 变量只在
       # run 步骤 shell 可见，桥接后后续步骤的 env: 才能用 ${{ env.* }}。
@@ -186,6 +217,27 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ inputs.rust-toolchain }}
+
+      # ── 1.6 交叉编译工具链（cross-targets 非空时）──────────────────────
+      # - rustup 装各 target 的 rust-std
+      # - cargo-zigbuild:darwin/linux 目标用 zig 当 linker(uv tool 装,自带隔离环境)
+      # - cargo-xwin:windows msvc 目标用微软官方可再分发 SDK(napi/maturin 调用)
+      # zig 锁 0.15.2:0.16 的 darwin 链接有 bug(exported symbols list 参数解析错,
+      # 实测 FileNotFound)。uv tool bin 注入 PATH 供后续步骤用。
+      - name: 装交叉编译工具链（zig + xwin）
+        if: ${{ inputs.cross-targets != '' }}
+        run: |
+          set -euo pipefail
+          command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+          for t in $(echo "${{ inputs.cross-targets }}" | tr ',' ' '); do
+            rustup target add "$t"
+          done
+          uv tool install cargo-zigbuild --with ziglang==0.15.2
+          case "${{ inputs.cross-targets }}" in
+            *windows*) uv tool install cargo-xwin ;;
+          esac
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo zigbuild --version 2>/dev/null || cargo zigbuild --help >/dev/null 2>&1 && echo "cargo-zigbuild OK"
 
       # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
       # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、
@@ -363,9 +415,22 @@ jobs:
           echo "python 版本=$pyver"
           perl -0pi -e "s/^version\s*=.*/version = \"$pyver\"/m" pyproject.toml
           grep -n '^version' pyproject.toml
-          echo '::group::maturin build'
+          echo '::group::maturin build（本机平台）'
           uvx maturin build --release --out dist
           echo '::endgroup::'
+          # 交叉平台:darwin/linux 走 --zig(zig linker);windows msvc 走 xwin
+          # (maturin 自动检测 target 调 cargo-xwin,无需 flag)。abi3(cp311-abi3)
+          # 一个平台一个 wheel,全 Python ≥3.11 通用。
+          for t in $(echo "${{ inputs.cross-targets }}" | tr ',' ' '); do
+            [ -z "$t" ] && continue
+            echo "::group::maturin build（交叉 $t）"
+            case "$t" in
+              *-windows-*) uvx maturin build --release --target "$t" --out dist ;;
+              *)           uvx maturin build --release --zig --target "$t" --out dist ;;
+            esac
+            echo '::endgroup::'
+          done
+          ls -la dist/
           twine check dist/*
           twine upload --skip-existing --non-interactive dist/*
           rm -rf dist
