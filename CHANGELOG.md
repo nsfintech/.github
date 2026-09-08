@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.4](https://github.com/nsfintech/.github/compare/v1.12.3...v1.12.4) (2026-09-08)
+
+
+### Bug Fixes
+
+* repsy-publish npm 段补 setup-node(发布 job 独立环境没有 npm) ([#46](https://github.com/nsfintech/.github/issues/46)) ([0c3560e](https://github.com/nsfintech/.github/commit/0c3560e8c3be7add3fa03d13e1788b5e8adea308))
+
 ## [1.12.3](https://github.com/nsfintech/.github/compare/v1.12.2...v1.12.3) (2026-09-08)
 
 
