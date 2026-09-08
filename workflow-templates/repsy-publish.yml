@@ -41,6 +41,11 @@ jobs:
       npm-build-command: |
         npm ci
         npm run build
+      # 多平台产物：交叉编译出 darwin / windows 二进制（linux 本机平台照常构建）；
+      # pypi 端每 target 一个 abi3 wheel，npm 端在本命令里循环（示例见 README）
+      cross-targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
+      # tag 必须在 test 分支历史上（防手工 tag 绕过分支 CI 直接发布）
+      require-branch: test
       publish-pypi: true
       pypi-working-directory: python
     # 无需 secrets: inherit -- 凭证来自 runner .env，不是 GitHub secret
