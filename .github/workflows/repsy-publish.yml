@@ -60,6 +60,11 @@ on:
         type: string
         default: 'stable'
 
+      node-version:
+        description: 'npm 构建与发布用的 Node 版本(actions/setup-node;默认 24,与 runner ci 门禁一致)'
+        type: string
+        default: '24'
+
       # ── cargo ─────────────────────────────────────────────────────────
       cargo-publish-crates:
         description: '按拓扑序发布的 crate 列表（逗号分隔，如 rslog-core,rslog）；workspace 内部依赖须写 version + registry = "repsy"（path 仅本地开发生效，发布时自动重写指向本 registry）。同版本已存在时跳过（重跑/补发场景）'
@@ -280,6 +285,15 @@ jobs:
           done
 
       # ── 3. npm：构建 + 发布（rc 打 --tag rc）─────────────────────────────
+      # 教训(与 cargo 段 cargo not found 同类):发布 job 是独立干净环境,npm 段
+      # 之前从没 setup-node,runner 上没有 npm 时 npm install 直接 127。
+      # ci 门禁 job 有 setup-node 能过,不等于发布 job 有——三端环境各自显式 setup。
+      - name: 装 Node(npm 构建与发布用)
+        if: ${{ inputs.publish-npm }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
       - name: 执行 npm 构建命令
         if: ${{ inputs.publish-npm && inputs.npm-build-command != '' }}
         working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
@@ -319,7 +333,8 @@ jobs:
           rm -f .npmrc
 
       # ── 4. pypi：maturin 构建 + twine 上传（rc 转 PEP 440）───────────────
-      # maturin 用的 Rust toolchain 已在公共 setup 装好；uv/twine 用 uv tool 装（runner 预装 uv，缺了也兜底装）。
+      # maturin 用的 Rust toolchain 已在公共 setup 装好。python 侧无需 setup-python：
+      # uvx maturin 与 uv tool install twine 都用 uv 自管解释器（含下载），不依赖系统 python。
       # twine 认证走环境变量（TWINE_USERNAME/TWINE_PASSWORD/TWINE_REPOSITORY_URL），
       # 不落 .pypirc（官方 CI 推荐方式）；--skip-existing 让重跑/补发不因同版本报错。
       - name: 装 twine（uv tool）

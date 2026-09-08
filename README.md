@@ -655,6 +655,7 @@ REPSY_PYPI_PASSWORD=<密码>
 | `npm-scope` | string | 空 | npm scope（不带 @，如 `nsfintech`）；空则从 package.json 包名推断 |
 | `npm-working-directory` | string | `.` | npm 包目录（含 package.json） |
 | `rust-toolchain` | string | `stable` | Rust toolchain（cargo publish / npm napi 构建 / maturin 构建三段共用，公共 setup 一次） |
+| `node-version` | string | `24` | npm 构建与发布用的 Node 版本（`actions/setup-node`；publish-npm 时自动 setup） |
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
 | `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
