@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/nsfintech/.github/compare/v1.12.4...v1.13.0) (2026-09-09)
+
+
+### Features
+
+* repsy-publish 支持交叉编译多平台产物(cross-targets)+ tag 血统校验(require-branch) ([#48](https://github.com/nsfintech/.github/issues/48)) ([451732d](https://github.com/nsfintech/.github/commit/451732dfa0893318d362ec3d566a3d424f6f8389))
+
+
+### Bug Fixes
+
+* 交叉工具链改 runner 预置,workflow 不装只用 ([#50](https://github.com/nsfintech/.github/issues/50)) ([e2ccbc4](https://github.com/nsfintech/.github/commit/e2ccbc4fdef3508340bdae03db0c8ca69609d305))
+
 ## [1.12.4](https://github.com/nsfintech/.github/compare/v1.12.3...v1.12.4) (2026-09-08)
 
 
