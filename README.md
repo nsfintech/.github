@@ -657,7 +657,7 @@ REPSY_PYPI_PASSWORD=<密码>
 | `rust-toolchain` | string | `stable` | Rust toolchain（cargo publish / npm napi 构建 / maturin 构建三段共用，公共 setup 一次） |
 | `node-version` | string | `24` | npm 构建与发布用的 Node 版本（`actions/setup-node`；publish-npm 时自动 setup） |
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
-| `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。非空时自动 rustup 装各 target + 装 cargo-zigbuild（zig 锁 0.15.2，0.16 有 darwin linker bug）/cargo-xwin；pypi 段每个 target 出一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。空 = 仅本机平台 |
+| `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。pypi 段每 target 一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。**前置：runner 预装交叉工具链**（见「runner 预置」） |
 | `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 是 `origin/<该分支>` 的祖先（`git merge-base --is-ancestor`），防手工 tag 绕过分支 CI 直接发布。如 `test` |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
 | `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
@@ -678,6 +678,27 @@ REPSY_PYPI_PASSWORD=<密码>
 > ```
 >
 > 编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
+
+### runner 预置：交叉编译工具链（一次性）
+
+交叉工具链属于 runner 供给（同 rust/node 工具链的定位），workflow 里不安装、只使用；装机一次永久生效（home 目录持久，无重复下载）。在 self-hosted linux runner 上以 runner 用户执行：
+
+```bash
+# 1) zig 0.15.2（锁版本：0.16 有 darwin linker bug，exported symbols list 报 FileNotFound，实测）
+curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C $HOME/.local/opt/
+ln -sfn $HOME/.local/opt/zig-x86_64-linux-0.15.2/zig $HOME/.local/bin/zig
+# 注意 URL 命名是 zig-x86_64-linux-...（新版命名），老命名 zig-linux-x86_64-... 已 404
+
+# 2) cargo-zigbuild + cargo-xwin（cargo 子命令；zig 在 PATH 即可，实测三消费方
+#    cargo zigbuild / maturin --zig / napi --cross-compile 全通）
+cargo install cargo-zigbuild --locked
+cargo install cargo-xwin --locked
+
+# 3) windows SDK（xwin 首次构建时自动下载到 ~/.cache/cargo-xwin/，约 1.1GB，之后
+#    有 DONE 标记就跳过；也可手动预热：cargo xwin build 任一 windows target 跑一次）
+```
+
+验证：`zig version` → `0.15.2`；`cargo zigbuild --help`、`cargo xwin --help` 可用。磁盘占用约 1.5GB（zig ~350MB + xwin SDK ~1.1GB）。rustup 的各 target rust-std 由 workflow 按需 `rustup target add`（rust 组件随 dtolnay toolchain 走，不算预置）。
 
 ## 权限
 

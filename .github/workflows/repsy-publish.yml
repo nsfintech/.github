@@ -65,11 +65,10 @@ on:
         type: string
         default: '24'
 
-      # 交叉编译目标(rust triple,逗号分隔)。非空时:rustup 装各 target、
-      # 装 cargo-zigbuild(darwin/linux 链接)+ cargo-xwin(windows msvc 链接)。
-      # pypi 段对每个 target 出一个 abi3 wheel;npm 段产物构建在 npm-build-command
-      # 里由调用方循环(README 有示例)。zig 锁 0.15.2:0.16 有 darwin linker bug
-      # (unable to read exported symbols list,实测)。
+      # 交叉编译目标(rust triple,逗号分隔)。前置条件:runner 已预装交叉工具链
+      # (cargo-zigbuild/zig/cargo-xwin,装机脚本见 README「runner 预置」;zig 0.15.2,
+      # 0.16 有 darwin linker bug 实测)。pypi 段对每个 target 出一个 abi3 wheel;
+      # npm 段产物构建在 npm-build-command 里由调用方循环(README 有示例)。
       cross-targets:
         description: '交叉编译目标(逗号分隔 rust triple,如 aarch64-apple-darwin,x86_64-pc-windows-msvc);空=仅本机平台'
         type: string
@@ -218,26 +217,17 @@ jobs:
         with:
           toolchain: ${{ inputs.rust-toolchain }}
 
-      # ── 1.6 交叉编译工具链（cross-targets 非空时）──────────────────────
-      # - rustup 装各 target 的 rust-std
-      # - cargo-zigbuild:darwin/linux 目标用 zig 当 linker(uv tool 装,自带隔离环境)
-      # - cargo-xwin:windows msvc 目标用微软官方可再分发 SDK(napi/maturin 调用)
-      # zig 锁 0.15.2:0.16 的 darwin 链接有 bug(exported symbols list 参数解析错,
-      # 实测 FileNotFound)。uv tool bin 注入 PATH 供后续步骤用。
-      - name: 装交叉编译工具链（zig + xwin）
+      # ── 1.6 交叉编译目标 rust-std（cross-targets 非空时）────────────────
+      # 工具链本体(zig 0.15.2 / cargo-zigbuild / cargo-xwin)由 runner 预置
+      # (装机脚本见 README「runner 预置」);rustup target 属 rust 组件,随
+      # dtolnay/rust-toolchain 的 toolchain 走,这里只制 rust-std。
+      - name: 装交叉 target rust-std
         if: ${{ inputs.cross-targets != '' }}
         run: |
           set -euo pipefail
-          command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
           for t in $(echo "${{ inputs.cross-targets }}" | tr ',' ' '); do
             rustup target add "$t"
           done
-          uv tool install cargo-zigbuild --with ziglang==0.15.2
-          case "${{ inputs.cross-targets }}" in
-            *windows*) uv tool install cargo-xwin ;;
-          esac
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          cargo zigbuild --version 2>/dev/null || cargo zigbuild --help >/dev/null 2>&1 && echo "cargo-zigbuild OK"
 
       # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
       # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、
