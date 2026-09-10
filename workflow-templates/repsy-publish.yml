@@ -39,12 +39,22 @@ jobs:
       npm-scope: nsfintech
       npm-working-directory: node
       npm-build-command: |
-        npm ci
+        npm install
         npm run build
+        for t in aarch64-apple-darwin x86_64-apple-darwin; do
+          npx napi build --platform --release --manifest-path ../crates/rslog-node/Cargo.toml --cross-compile --target "$t"
+        done
+        npx napi build --platform --release --manifest-path ../crates/rslog-node/Cargo.toml --cross-compile --target x86_64-pc-windows-msvc
+        # napi 标准分包：create-npm-dirs 生成 npm/<platform>/ 子包骨架，
+        # artifacts 把各平台 .node 路由进对应子包（产物在 crate 目录）
+        npx napi create-npm-dirs
+        npx napi artifacts --output-dir ../crates/rslog-node
+      # 多平台分包发布（napi 标准布局：root + npm/<platform>/ 子包，
+      # optionalDependencies 按平台解析，安装只拉当前平台子包）
+      npm-platform-packages: true
       # 多平台产物：交叉编译出 darwin / windows 二进制（linux 本机平台照常构建）；
-      # pypi 端每 target 一个 abi3 wheel，npm 端在本命令里循环（示例见 README）。
-      # 交叉工具链由 workflow 自动装（nsfintech/actions 的 setup-cross-tools，
-      # 缓存后秒级命中），无需 runner 手工预置
+      # pypi 端每 target 一个 abi3 wheel。交叉工具链由 workflow 自动装
+      # （nsfintech/actions 的 setup-cross-tools，缓存后秒级命中）
       cross-targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
       # tag 必须在 test 分支历史上（防手工 tag 绕过分支 CI 直接发布）
       require-branch: test

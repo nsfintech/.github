@@ -657,6 +657,7 @@ REPSY_PYPI_PASSWORD=<密码>
 | `rust-toolchain` | string | `stable` | Rust toolchain（cargo publish / npm napi 构建 / maturin 构建三段共用，公共 setup 一次） |
 | `node-version` | string | `24` | npm 构建与发布用的 Node 版本（`actions/setup-node`；publish-npm 时自动 setup） |
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
+| `npm-platform-packages` | boolean | `false` | **napi 多平台分包模式**（napi 生态标准布局）：root 纯 JS 包 + `npm/<platform>/` 每平台子包，root 经 `optionalDependencies` 按平台解析，安装只拉当前平台子包（esbuild/swc 同款）。true 时平台子包逐个盖章→查重→发布（rc 全部打 `--tag rc`），root 的 `optionalDependencies` 注入精确 pin 后最后发。**多平台二进制不支持塞单包**（合一布局：装包方永远拉全平台产物） |
 | `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。pypi 段每 target 一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。交叉工具链（zig / cargo-zigbuild / cargo-xwin / Windows SDK）由 [`nsfintech/actions`](https://github.com/nsfintech/actions) 的 setup-cross-tools 自动安装（`$RUNNER_TOOL_CACHE` 缓存，首跑含 ~1.1GB SDK 下载较慢，之后秒级命中），无需 runner 手工预置 |
 | `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 是 `origin/<该分支>` 的祖先（`git merge-base --is-ancestor`），防手工 tag 绕过分支 CI 直接发布。如 `test` |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
@@ -664,16 +665,36 @@ REPSY_PYPI_PASSWORD=<密码>
 
 **输出**（供下游消费）：`version`（tag 解析出的版本，如 `0.2.0` / `0.2.0-rc.1`）、`is_rc`（`"true"`/`"false"`）、`npm_tag`（`rc` / `latest`）。
 
-**多平台产物**（`cross-targets`，2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK；工具链由 setup-cross-tools 自动供给，见输入表）。早期版本仅出 linux-x64 的限制已由此解决。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。npm 端在 `npm-build-command` 里循环：
+**多平台产物**（`cross-targets`，2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK；工具链由 setup-cross-tools 自动供给，见输入表）。早期版本仅出 linux-x64 的限制已由此解决。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。
+
+**npm 多平台：napi 标准分包布局（`npm-platform-packages: true`）**。多平台二进制**不塞单包**——单包装包方永远拉全平台产物，napi 生态标准是 root 纯 JS 包 + 每平台子包，`optionalDependencies` 按 `os`/`cpu` 解析，安装只拉当前平台子包（esbuild/swc 同款）：
+
+```
+node/                              # root 包 @nsfintech/rslog（纯 JS，无二进制）
+├── index.js                       # loader：require('@nsfintech/rslog-<platform>')
+└── npm/                           # napi create-npm-dirs 生成子包骨架
+    ├── darwin-arm64/              # @nsfintech/rslog-darwin-arm64
+    │   ├── package.json           #   os: ["darwin"], cpu: ["arm64"], main 即 .node
+    │   └── rslog-node.darwin-arm64.node   # napi artifacts 路由进来
+    └── ...（每平台一个目录）
+```
+
+调用方 `npm-build-command` 负责：各平台 `napi build --platform`（产物名带平台后缀）→ `npx napi create-npm-dirs` 生成子包骨架 → `npx napi artifacts --output-dir <build 输出目录>` 把 `.node` 路由进子包：
 
 ```yaml
 npm-build-command: |
   npm install
-  for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
-    npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
+  npm run build   # 本机平台 napi build --platform
+  for t in aarch64-apple-darwin x86_64-apple-darwin; do
+    npx napi build --platform --release --manifest-path ../crates/rslog-node/Cargo.toml --cross-compile --target "$t"
   done
-  npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
+  npx napi build --platform --release --manifest-path ../crates/rslog-node/Cargo.toml --cross-compile --target x86_64-pc-windows-msvc
+  npx napi create-npm-dirs
+  npx napi artifacts --output-dir ../crates/rslog-node
+npm-platform-packages: true
 ```
+
+workflow 侧（不用 `napi pre-publish` 一条龙：它不带 `--tag`（rc 污染 latest）、npmClient 自动检测、无逐包查重、还会建 GitHub release）：平台子包逐个盖章 tag 版本 → `npm view` 查重跳过 → `npm publish --tag rc/latest`；root 的 `optionalDependencies` 注入子包精确 pin 后最后发（保证装 root 时 od 可解析）。root 的 loader 需调用方自己写或用 napi 生成的 binding（从子包 require）。
 
 编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
 

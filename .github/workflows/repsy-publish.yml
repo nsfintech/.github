@@ -100,6 +100,16 @@ on:
         description: 'npm publish 前在 runner 上执行的构建命令（多行；如编译 .node 产物，需要 cargo 的场景共用 rust-toolchain 装的 toolchain）'
         type: string
         default: ''
+      # napi 多平台分包发布(napi 生态标准布局:root 纯 JS 包 + 每平台子包经
+      # optionalDependencies 按平台解析,安装只拉当前平台子包,esbuild/swc 同款)。
+      # true 时 npm 段进入分包模式:npm-build-command 须跑 napi create-npm-dirs +
+      # artifacts 填充 npm/<platform>/ 子包(README 有完整示例);workflow 逐子包
+      # 盖章版本→查重→发布,root 的 optionalDependencies 注入后最后发。
+      # false(默认)= 单包模式(纯 JS 包;不支持把多平台二进制塞单包的合一布局)。
+      npm-platform-packages:
+        description: 'napi 多平台分包模式：root 包 + npm/<platform>/ 每平台子包(optionalDependencies)，平台子包先发、root 最后；需 npm-build-command 先跑 napi create-npm-dirs/artifacts 填充子包'
+        type: boolean
+        default: false
 
       # ── pypi ─────────────────────────────────────────────────────────
       pypi-working-directory:
@@ -347,8 +357,95 @@ jobs:
         shell: bash
         run: ${{ inputs.npm-build-command }}
 
+      # 3a. 分包模式（npm-platform-packages=true）：napi 标准布局
+      #   npm/<platformArchABI>/ 子包(name: <root包名>-<platformArchABI>,
+      #   os/cpu 字段限定平台,main 即 .node 本身),root 经 optionalDependencies
+      #   声明。安装时 npm 只拉当前平台的子包(esbuild/swc 同款机制)。
+      #   不支持把多平台二进制塞单包的合一布局(装包方永远拉全平台产物)。
+      # 发布顺序:平台子包先(全部)→root 最后,保证装 root 时 optionalDeps 可解析。
+      # 逐包盖章 tag 版本;npm view 查重跳过;rc 时全部包打 --tag rc。
+      # 不用 napi pre-publish 一条龙:它不带 --tag(rc 污染 latest)、npmClient
+      # 自动检测(pnpm/npm 认证行为不一致)、无逐包查重、还会建 GitHub release
+      # (release-please 已建)——模板自控逐包发布,与 cargo 段同风格。
+      - name: npm 分包发布（子包 → root）
+        if: ${{ inputs.publish-npm && inputs.npm-platform-packages }}
+        working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
+        run: |
+          set -euo pipefail
+          ver="${{ steps.tag.outputs.version }}"
+          npm_tag="${{ steps.tag.outputs.npm_tag }}"
+          if [ ! -d npm ] || [ -z "$(ls -d npm/*/ 2>/dev/null)" ]; then
+            echo "::error::npm-platform-packages=true 但 npm/ 下无子包目录——npm-build-command 须跑 npx napi create-npm-dirs + npx napi artifacts 填充(见 README 示例)"
+            exit 1
+          fi
+          # scope：输入优先，否则从包名推断（@scope/name）；裸包名不支持（repsy npm 仅 scoped）
+          if [ -n "${{ inputs.npm-scope }}" ]; then
+            scope="@${{ inputs.npm-scope }}"
+          else
+            name="$(node -p "require('./package.json').name")"
+            case "$name" in
+              @*/*) scope="${name%%/*}" ;;
+              *) echo "::error::包名 $name 无 scope，且未传 npm-scope（repsy npm registry 仅支持 scoped 包）"; exit 1 ;;
+            esac
+          fi
+          # .npmrc 写包目录树根:root 与子包发布都往内层走,级联生效
+          host="${REPSY_NPM_REGISTRY#https://}"
+          cat > .npmrc <<EOF
+          ${scope}:registry=${REPSY_NPM_REGISTRY%/}/
+          //${host%/}/:_authToken=${REPSY_NPM_TOKEN}
+          EOF
+          root_pkg="$(node -p "require('./package.json').name")"
+
+          # ── 平台子包:逐个盖章 + 查重 + 发布 ──────────────
+          sub_names=""
+          for d in npm/*/; do
+            plat="$(basename "$d")"
+            sub="$(node -p "require('./npm/$plat/package.json').name")"
+            sub_names="$sub_names $sub"
+            # 盖章(tag 单一事实源,不回填源码);node 写 json 避免 npm version 副作用
+            node -e "
+              const fs = require('fs');
+              const p = './npm/$plat/package.json';
+              const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+              j.version = '$ver';
+              fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\\n');
+            "
+            # 子包必须含 .node 产物(artifacts 漏跑时只剩骨架 package.json)
+            if ! ls "npm/$plat/"*.node >/dev/null 2>&1; then
+              echo "::error::子包 $sub(npm/$plat) 缺 .node 产物——npm-build-command 须跑 npx napi artifacts 路由产物(见 README 示例)"
+              exit 1
+            fi
+            if [ -n "$(npm view "${sub}@${ver}" version 2>/dev/null)" ]; then
+              echo "::notice::$sub@$ver 已存在于 repsy，跳过"
+            else
+              (cd "npm/$plat" && npm publish --tag "$npm_tag")
+            fi
+          done
+
+          # ── root:optionalDependencies 注入平台子包(精确 pin)→ 查重 → 发布 ──
+          node -e "
+            const fs = require('fs');
+            const j = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            j.version = '$ver';
+            const od = {};
+            for (const sub of '$sub_names'.trim().split(/\\s+/)) od[sub] = '$ver';
+            j.optionalDependencies = Object.assign({}, j.optionalDependencies, od);
+            fs.writeFileSync('package.json', JSON.stringify(j, null, 2) + '\\n');
+          "
+          echo "root optionalDependencies:"
+          node -p "JSON.stringify(require('./package.json').optionalDependencies, null, 2)"
+          if [ -n "$(npm view "${root_pkg}@${ver}" version 2>/dev/null)" ]; then
+            echo "::notice::$root_pkg@$ver 已存在于 repsy，跳过（npm dist-tag 不动）"
+          else
+            npm publish --tag "$npm_tag"
+          fi
+          rm -f .npmrc
+
+      # 3b. 单包模式(默认;纯 JS 包)。多平台二进制禁止塞单包——装包方永远拉
+      # 全平台产物(浪费带宽),napi 生态标准是分包(optionalDependencies 按平台
+      # 解析),开 npm-platform-packages 走 3a。
       - name: 盖章 npm 版本 + 写 .npmrc + 发布
-        if: ${{ inputs.publish-npm }}
+        if: ${{ inputs.publish-npm && !inputs.npm-platform-packages }}
         working-directory: ${{ github.workspace }}/${{ inputs.npm-working-directory }}
         run: |
           set -euo pipefail
@@ -383,7 +480,10 @@ jobs:
       # maturin 用的 Rust toolchain 已在公共 setup 装好。python 侧无需 setup-python：
       # uvx maturin 与 uv tool install twine 都用 uv 自管解释器（含下载），不依赖系统 python。
       # twine 认证走环境变量（TWINE_USERNAME/TWINE_PASSWORD/TWINE_REPOSITORY_URL），
-      # 不落 .pypirc（官方 CI 推荐方式）；--skip-existing 让重跑/补发不因同版本报错。
+      # 不落 .pypirc（官方 CI 推荐方式）。
+      # 重跑/补发不用 --skip-existing：repsy pypi 端点不声明支持该功能，twine 启动前
+      # 探测仓库能力直接 UnsupportedConfiguration 拒绝上传(2026-09 rslog rc.3 实测)；
+      # 改为直接上传，重复上传报错 grep 后转 notice 跳过(与 cargo/npm 段同模式)。
       - name: 装 twine（uv tool）
         if: ${{ inputs.publish-pypi }}
         run: |
@@ -427,5 +527,14 @@ jobs:
           done
           ls -la dist/
           twine check dist/*
-          twine upload --skip-existing --non-interactive dist/*
+          # 重复上传(重跑/补发):repsy 报 400 File exists 类错误——转 notice 跳过;
+          # 其余报错照常 fail。stderr 落盘比对,stdout 进度信息保持可见。
+          if ! twine upload --non-interactive dist/* 2>"$RUNNER_TEMP/twine.err"; then
+            if grep -qiE 'already exists|file exists|400' "$RUNNER_TEMP/twine.err"; then
+              echo "::notice::部分 wheel 已存在于 repsy，跳过（本次未重复上传的已传完）"
+            else
+              cat "$RUNNER_TEMP/twine.err" >&2
+              exit 1
+            fi
+          fi
           rm -rf dist
