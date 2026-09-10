@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/nsfintech/.github/compare/v1.13.0...v1.13.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* repsy-publish 交叉工具链改用 nsfintech/actions 的 setup-cross-tools 供给 ([#51](https://github.com/nsfintech/.github/issues/51)) ([ebfd3e3](https://github.com/nsfintech/.github/commit/ebfd3e35eead747a74e65e451e9ecb5ba40a33e0))
+
 ## [1.13.0](https://github.com/nsfintech/.github/compare/v1.12.4...v1.13.0) (2026-09-09)
 
 
