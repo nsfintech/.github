@@ -665,17 +665,17 @@ REPSY_PYPI_PASSWORD=<密码>
 **输出**（供下游消费）：`version`（tag 解析出的版本，如 `0.2.0` / `0.2.0-rc.1`）、`is_rc`（`"true"`/`"false"`）、`npm_tag`（`rc` / `latest`）。
 
 **多平台产物**（`cross-targets`，2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK；工具链由 setup-cross-tools 自动供给，见输入表）。早期版本仅出 linux-x64 的限制已由此解决。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。npm 端在 `npm-build-command` 里循环：
->
-> ```yaml
-> npm-build-command: |
->   npm install
->   for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
->     npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
->   done
->   npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
-> ```
->
-> 编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
+
+```yaml
+npm-build-command: |
+  npm install
+  for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+    npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
+  done
+  npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
+```
+
+编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
 
 ### 交叉编译工具链（自动安装）
 
