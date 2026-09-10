@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/nsfintech/.github/compare/v1.13.1...v1.14.0) (2026-09-10)
+
+
+### Features
+
+* repsy-publish npm 段支持 napi 标准多平台分包(npm-platform-packages) ([#53](https://github.com/nsfintech/.github/issues/53)) ([763c364](https://github.com/nsfintech/.github/commit/763c364f363e42fd403e0ec01b5c301d502954dc))
+
 ## [1.13.1](https://github.com/nsfintech/.github/compare/v1.13.0...v1.13.1) (2026-09-10)
 
 
