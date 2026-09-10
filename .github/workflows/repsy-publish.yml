@@ -65,9 +65,9 @@ on:
         type: string
         default: '24'
 
-      # 交叉编译目标(rust triple,逗号分隔)。前置条件:runner 已预装交叉工具链
-      # (cargo-zigbuild/zig/cargo-xwin,装机脚本见 README「runner 预置」;zig 0.15.2,
-      # 0.16 有 darwin linker bug 实测)。pypi 段对每个 target 出一个 abi3 wheel;
+      # 交叉编译目标(rust triple,逗号分隔)。工具链由 nsfintech/actions 的
+      # setup-cross-tools 自动安装(zig 0.15.2 锁版本:0.16 有 darwin linker
+      # bug 实测)。pypi 段对每个 target 出一个 abi3 wheel;
       # npm 段产物构建在 npm-build-command 里由调用方循环(README 有示例)。
       cross-targets:
         description: '交叉编译目标(逗号分隔 rust triple,如 aarch64-apple-darwin,x86_64-pc-windows-msvc);空=仅本机平台'
@@ -211,23 +211,28 @@ jobs:
       # cargo publish / npm napi 构建 / maturin 构建三段共用同一 toolchain
       # （rust-toolchain 输入，默认 stable）。教训：首版 cargo 段裸跑 cargo、
       # 只在 npm/pypi 段各装一次,发布 job 干净环境 cargo not found。
+      # cross-targets 一并经 targets: 装上(替代原独立 rustup target add 步);
+      # llvm-tools 提供 lld-link(rust-lld)/llvm-ar:windows msvc 链接 cdylib
+      # (DLL/.node)必需,cargo-xwin 的 symlink_llvm_tool 从 rustup 组件取
+      # (actions 仓库 self-test 实测)。
       - name: 装 Rust toolchain
         if: ${{ inputs.publish-cargo || inputs.publish-npm || inputs.publish-pypi }}
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ inputs.rust-toolchain }}
+          targets: ${{ inputs.cross-targets }}
+          components: ${{ inputs.cross-targets != '' && 'llvm-tools' || '' }}
 
-      # ── 1.6 交叉编译目标 rust-std（cross-targets 非空时）────────────────
-      # 工具链本体(zig 0.15.2 / cargo-zigbuild / cargo-xwin)由 runner 预置
-      # (装机脚本见 README「runner 预置」);rustup target 属 rust 组件,随
-      # dtolnay/rust-toolchain 的 toolchain 走,这里只制 rust-std。
-      - name: 装交叉 target rust-std
+      # ── 1.6 交叉编译工具链（cross-targets 非空时）──────────────────────
+      # zig 0.15.2 / cargo-zigbuild / cargo-xwin 由 nsfintech/actions 的
+      # setup-cross-tools 供给(预编译二进制 + sha256 校验,$RUNNER_TOOL_CACHE
+      # 缓存,self-hosted 持久——首跑下载后秒级命中)。Windows SDK ~1.1GB 首跑由
+      # action 预下载到 XWIN_CACHE_DIR(写 GITHUB_ENV,无进度输出需 10-15 分钟),
+      # 之后 DONE 标记跳过。@v1 浮动 tag = actions 仓库的版本消费约定(非破坏性
+      # 工具链升级自动跟进,破坏性升 v2)。替代早期「runner 手工预置」——工具链
+      # 进版本管理,裸机 runner 可用,不再依赖人工装机。
+      - uses: nsfintech/actions/actions/setup-cross-tools@v1
         if: ${{ inputs.cross-targets != '' }}
-        run: |
-          set -euo pipefail
-          for t in $(echo "${{ inputs.cross-targets }}" | tr ',' ' '); do
-            rustup target add "$t"
-          done
 
       # ── 2. cargo：拓扑序逐 crate 发布 ──────────────────────────────────
       # registry 配置【覆盖写】仓库根 .cargo/config.toml（org 统一只放 repsy index、

@@ -657,48 +657,29 @@ REPSY_PYPI_PASSWORD=<密码>
 | `rust-toolchain` | string | `stable` | Rust toolchain（cargo publish / npm napi 构建 / maturin 构建三段共用，公共 setup 一次） |
 | `node-version` | string | `24` | npm 构建与发布用的 Node 版本（`actions/setup-node`；publish-npm 时自动 setup） |
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
-| `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。pypi 段每 target 一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。**前置：runner 预装交叉工具链**（见「runner 预置」） |
+| `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。pypi 段每 target 一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。交叉工具链（zig / cargo-zigbuild / cargo-xwin / Windows SDK）由 [`nsfintech/actions`](https://github.com/nsfintech/actions) 的 setup-cross-tools 自动安装（`$RUNNER_TOOL_CACHE` 缓存，首跑含 ~1.1GB SDK 下载较慢，之后秒级命中），无需 runner 手工预置 |
 | `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 是 `origin/<该分支>` 的祖先（`git merge-base --is-ancestor`），防手工 tag 绕过分支 CI 直接发布。如 `test` |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
 | `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
 
 **输出**（供下游消费）：`version`（tag 解析出的版本，如 `0.2.0` / `0.2.0-rc.1`）、`is_rc`（`"true"`/`"false"`）、`npm_tag`（`rc` / `latest`）。
 
-**已知限制**：发布物仅含 runner 所在平台（linux-x64）；darwin 产物需 macos runner 或后续本地构建补传。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。
+**多平台产物**（`cross-targets`，2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK；工具链由 setup-cross-tools 自动供给，见输入表）。早期版本仅出 linux-x64 的限制已由此解决。npm 的 repsy dist-tag 支持需首次发布验证（退路：用户用精确版本号安装，永远可用）。npm 端在 `npm-build-command` 里循环：
 
-> 上述「仅 linux-x64」限制已由 `cross-targets` 解决（2026-09）：单台 linux runner 交叉编译出 darwin-arm64/x64、windows-x64-msvc 产物（zig 作 darwin/linux linker、xwin 用微软可再分发 SDK），pypi 端每 target 一个 abi3 wheel；npm 端在 `npm-build-command` 里循环：
->
-> ```yaml
-> npm-build-command: |
->   npm install
->   for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
->     npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
->   done
->   npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
-> ```
->
-> 编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
-
-### runner 预置：交叉编译工具链（一次性）
-
-交叉工具链属于 runner 供给（同 rust/node 工具链的定位），workflow 里不安装、只使用；装机一次永久生效（home 目录持久，无重复下载）。在 self-hosted linux runner 上以 runner 用户执行：
-
-```bash
-# 1) zig 0.15.2（锁版本：0.16 有 darwin linker bug，exported symbols list 报 FileNotFound，实测）
-curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C $HOME/.local/opt/
-ln -sfn $HOME/.local/opt/zig-x86_64-linux-0.15.2/zig $HOME/.local/bin/zig
-# 注意 URL 命名是 zig-x86_64-linux-...（新版命名），老命名 zig-linux-x86_64-... 已 404
-
-# 2) cargo-zigbuild + cargo-xwin（cargo 子命令；zig 在 PATH 即可，实测三消费方
-#    cargo zigbuild / maturin --zig / napi --cross-compile 全通）
-cargo install cargo-zigbuild --locked
-cargo install cargo-xwin --locked
-
-# 3) windows SDK（xwin 首次构建时自动下载到 ~/.cache/cargo-xwin/，约 1.1GB，之后
-#    有 DONE 标记就跳过；也可手动预热：cargo xwin build 任一 windows target 跑一次）
+```yaml
+npm-build-command: |
+  npm install
+  for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+    npx napi build --release --platform --cross-compile --target "$t" ../crates/rslog-node
+  done
+  npx napi build --release --platform ../crates/rslog-node  # 本机 windows 目标同理用 --cross-compile
 ```
 
-验证：`zig version` → `0.15.2`；`cargo zigbuild --help`、`cargo xwin --help` 可用。磁盘占用约 1.5GB（zig ~350MB + xwin SDK ~1.1GB）。rustup 的各 target rust-std 由 workflow 按需 `rustup target add`（rust 组件随 dtolnay toolchain 走，不算预置）。
+编译缓存实测共享：同 target 下 napi build（cargo zigbuild）与 maturin build 的 fingerprint 一致，公共依赖链只编一遍——npm 与 pypi 的构建应尽量在同 target 下背靠背执行（模板已按此排序）。
+
+### 交叉编译工具链（自动安装）
+
+交叉工具链（zig 0.15.2 + cargo-zigbuild + cargo-xwin + Windows SDK）由 [`nsfintech/actions`](https://github.com/nsfintech/actions) 仓库的 setup-cross-tools action 供给，`cross-targets` 非空时 workflow 自动调用（`uses: nsfintech/actions/actions/setup-cross-tools@v1`）。预编译二进制 + sha256 校验，安装到 `$RUNNER_TOOL_CACHE`（self-hosted runner 持久，首跑后秒级命中）；Windows SDK ~1.1GB 首跑预下载（无进度输出，约 10-15 分钟），之后 DONE 标记跳过。早期「runner 手工预置」方案已废弃。版本/锁版本原因见 actions 仓库 README（zig 锁 0.15.2：0.16 有 darwin linker bug）。rustup 侧各 target 的 rust-std 与 llvm-tools（windows DLL 链接必需）随 dtolnay toolchain 步一并装。
 
 ## 权限
 
