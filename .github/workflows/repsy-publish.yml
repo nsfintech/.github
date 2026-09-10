@@ -388,12 +388,17 @@ jobs:
               *) echo "::error::包名 $name 无 scope，且未传 npm-scope（repsy npm registry 仅支持 scoped 包）"; exit 1 ;;
             esac
           fi
-          # .npmrc 写包目录树根:root 与子包发布都往内层走,级联生效
+          # .npmrc 陷阱(npm 11 实测):per-project .npmrc 只在「项目根」生效——
+          # 从 cwd 向上找最近含 package.json 的目录,到那为止。子包目录
+          # npm/<platform>/ 自己有 package.json,npm 就地停止向上查找,
+          # 看不到包根的 .npmrc(rc.4 ENEEDAUTH 死因:publish 掉回
+          # registry.npmjs.org)。所以:包根写一份 + 每个子包目录各写一份
+          # (.npmrc 不会进 tarball,npm 默认排除)。
           host="${REPSY_NPM_REGISTRY#https://}"
-          cat > .npmrc <<EOF
-          ${scope}:registry=${REPSY_NPM_REGISTRY%/}/
-          //${host%/}/:_authToken=${REPSY_NPM_TOKEN}
-          EOF
+          npmrc_body="${scope}:registry=${REPSY_NPM_REGISTRY%/}/
+          //${host%/}/:_authToken=${REPSY_NPM_TOKEN}"
+          printf '%s\n' "$npmrc_body" > .npmrc
+          for d in npm/*/; do printf '%s\n' "$npmrc_body" > "${d}.npmrc"; done
           root_pkg="$(node -p "require('./package.json').name")"
 
           # ── 平台子包:逐个盖章 + 查重 + 发布 ──────────────
@@ -439,7 +444,7 @@ jobs:
           else
             npm publish --tag "$npm_tag"
           fi
-          rm -f .npmrc
+          rm -f .npmrc npm/*/.npmrc
 
       # 3b. 单包模式(默认;纯 JS 包)。多平台二进制禁止塞单包——装包方永远拉
       # 全平台产物(浪费带宽),napi 生态标准是分包(optionalDependencies 按平台
