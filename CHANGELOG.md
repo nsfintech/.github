@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.1](https://github.com/nsfintech/.github/compare/v1.14.0...v1.14.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* 分包模式 .npmrc 逐子包目录写(rc.4 ENEEDAUTH 死因) ([#56](https://github.com/nsfintech/.github/issues/56)) ([a393cbb](https://github.com/nsfintech/.github/commit/a393cbba7b89a3a7b0f0bef2cfc5b7bbb92bf2af))
+
 ## [1.14.0](https://github.com/nsfintech/.github/compare/v1.13.1...v1.14.0) (2026-09-10)
 
 
