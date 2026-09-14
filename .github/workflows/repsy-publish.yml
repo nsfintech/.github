@@ -76,8 +76,12 @@ on:
 
       # tag 血统校验:非空时要求 tag 所指 commit 是 origin/<该分支> 的祖先
       # (git merge-base --is-ancestor),防手工 tag 绕过分支 CI 直接发布。空=不校验。
+      # 支持逗号分隔多分支(如 "test,main"):任一分支祖先即通过 -- rc 发布的 tag
+      # 打在 test 的 release commit 上,stable 发布的 tag 打在 main 的 release
+      # commit 上(release-please 的 stable release PR 只合入 main,该 commit
+      # 天然不在 test 历史上,单分支配置会把 stable 发布全部误杀)。
       require-branch:
-        description: 'tag 必须在该分支历史上才允许发布(如 test);空=不校验'
+        description: 'tag 必须在这些分支任一历史上才允许发布(逗号分隔,如 test,main);空=不校验'
         type: string
         default: ''
 
@@ -179,15 +183,24 @@ jobs:
 
       # ── 0.5 tag 血统校验:发布的前提是 commit 在目标分支历史上验证过 ─────
       # (cargo publish --no-verify 的前提也是这个)。防手工 tag 绕过分支 CI。
+      # require-branch 逗号分隔多分支,任一命中即通过(见 inputs 注释)。
       - name: 校验 tag 血统（require-branch）
         if: ${{ inputs.require-branch != '' }}
         run: |
           set -euo pipefail
-          branch="${{ inputs.require-branch }}"
-          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
-            echo "tag $GITHUB_REF_NAME 的 commit 是 origin/$branch 祖先 ✅"
-          else
-            echo "::error::tag $GITHUB_REF_NAME 不在 origin/$branch 历史上（手工 tag?）——发布的 commit 必须先在 $branch 分支 CI 验证过"
+          IFS=',' read -ra branches <<< "${{ inputs.require-branch }}"
+          ok=""
+          for branch in "${branches[@]}"; do
+            branch="$(echo "$branch" | xargs)"  # 容忍 "test, main" 里逗号后的空格
+            [ -z "$branch" ] && continue
+            if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch" 2>/dev/null; then
+              echo "tag $GITHUB_REF_NAME 的 commit 是 origin/$branch 祖先 ✅"
+              ok=1
+              break
+            fi
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 不在配置分支(${{ inputs.require-branch }})任一历史上（手工 tag?）——发布的 commit 必须先在分支 CI 验证过"
             exit 1
           fi
 

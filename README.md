@@ -659,7 +659,7 @@ REPSY_PYPI_PASSWORD=<密码>
 | `npm-build-command` | string | 空 | `npm publish` 前的构建命令（多行；如编译 .node 产物，需要 cargo 的场景用 `rust-toolchain` 装的 toolchain） |
 | `npm-platform-packages` | boolean | `false` | **napi 多平台分包模式**（napi 生态标准布局）：root 纯 JS 包 + `npm/<platform>/` 每平台子包，root 经 `optionalDependencies` 按平台解析，安装只拉当前平台子包（esbuild/swc 同款）。true 时平台子包逐个盖章→查重→发布（rc 全部打 `--tag rc`），root 的 `optionalDependencies` 注入精确 pin 后最后发。**多平台二进制不支持塞单包**（合一布局：装包方永远拉全平台产物） |
 | `cross-targets` | string | 空 | 交叉编译目标（逗号分隔 rust triple，如 `aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc`）。pypi 段每 target 一个 abi3 wheel，npm 段在 `npm-build-command` 里循环构建（见下）。交叉工具链（zig / cargo-zigbuild / cargo-xwin / Windows SDK）由 [`nsfintech/actions`](https://github.com/nsfintech/actions) 的 setup-cross-tools 自动安装（`$RUNNER_TOOL_CACHE` 缓存，首跑含 ~1.1GB SDK 下载较慢，之后秒级命中），无需 runner 手工预置 |
-| `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 是 `origin/<该分支>` 的祖先（`git merge-base --is-ancestor`），防手工 tag 绕过分支 CI 直接发布。如 `test` |
+| `require-branch` | string | 空 | tag 血统校验：非空时要求 tag 所指 commit 在所配分支任一的历史上（`git merge-base --is-ancestor`，逗号分隔，如 `test,main`），防手工 tag 绕过分支 CI 直接发布。rc tag 打在 test 的 release commit、stable tag 打在 main 的 release commit，配 `test,main` 两种发布都放行 |
 | `publish-pypi` | boolean | `false` | 发布 python 包（maturin 构建 wheel + twine 上传） |
 | `pypi-working-directory` | string | `.` | python 包目录（含 pyproject.toml） |
 
