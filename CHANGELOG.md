@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/nsfintech/.github/compare/v1.14.2...v1.15.0) (2026-09-14)
+
+
+### Features
+
+* release-please 加 sync-back-to,stable 发版后自动开同步回 PR ([#60](https://github.com/nsfintech/.github/issues/60)) ([5485f5b](https://github.com/nsfintech/.github/commit/5485f5b20211dfeb40d651d3ccfa17012e0b0061))
+
 ## [1.14.2](https://github.com/nsfintech/.github/compare/v1.14.1...v1.14.2) (2026-09-14)
 
 
