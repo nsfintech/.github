@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/nsfintech/.github/compare/v1.14.1...v1.14.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* require-branch 支持逗号分隔多分支,stable 发布不再被血统守卫误杀 ([#58](https://github.com/nsfintech/.github/issues/58)) ([6519e72](https://github.com/nsfintech/.github/commit/6519e7259edfc8a3ac7514075f7f0265fdc412bf))
+
 ## [1.14.1](https://github.com/nsfintech/.github/compare/v1.14.0...v1.14.1) (2026-09-10)
 
 
