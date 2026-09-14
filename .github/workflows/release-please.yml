@@ -65,6 +65,11 @@ on:
         description: '预发布类型，默认 rc（生成 vX.Y.Z-rc.N）'
         type: string
         default: 'rc'
+      sync-back-to:
+        description: 'stable 发版后自动开 PR 同步回的分支（如 test）；空=不启用。仅 stable release 触发（rc 不触发），避免 test 版本基线落后已发 stable；幂等（同向 PR 已存在则跳过）'
+        type: string
+        required: false
+        default: ''
     outputs:
       release_created:
         description: '本次运行是否创建了 release（"true" / "false"）'
@@ -287,3 +292,42 @@ jobs:
           TARGET_BRANCH: ${{ github.ref_name }}
           CMD: release-pr
         run: node "$RUNNER_TEMP/rp-driver.js"
+
+      # ── stable 发版后自动开 同步回 PR（opt-in：sync-back-to 非空才跑）────────
+      # 动机:release commit（版本号/CHANGELOG）只落在发版分支（如 main）,若不回同步,
+      # 开发分支（如 test）的版本基线会持续落后,下个 rc 周期起跳点错乱、版本文件冲突
+      # 滚雪球。rc 不触发（rc 本身在 test 上,无需同步;也防误配反向同步）。
+      # 时机:release_created 且非 prerelease 的此刻——tag 已打、release commit 已在
+      #   main,test 通常静着（下个 rc 周期未开始）,冲突窗口最小。
+      # 只开 PR 不自动合并:test 可能已进 rc 周期,版本文件冲突需人工裁决（取 main 侧
+      #   高版本号）。合并请用 merge commit（历史即血统）。
+      # 幂等:无领先提交（compare ahead_by=0）或同向 PR 已存在时静默跳过。
+      - name: Open sync-back PR（stable 发版后）
+        if: ${{ inputs.sync-back-to != '' && steps.release.outputs.release_created == 'true' && steps.release.outputs.prerelease == 'false' && github.ref_name != inputs.sync-back-to }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.token || secrets.GITHUB_TOKEN }}
+          SYNC_TO: ${{ inputs.sync-back-to }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          ahead=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${SYNC_TO}...${GITHUB_REF_NAME}" --jq '.ahead_by' 2>/dev/null || echo 1)
+          if [ "$ahead" = "0" ]; then
+            echo "::notice::${GITHUB_REF_NAME} 无领先 ${SYNC_TO} 的提交，无需同步"
+            exit 0
+          fi
+          echo "${GITHUB_REF_NAME} 领先 ${SYNC_TO} ${ahead} 个提交，创建同步 PR"
+          body="$(printf '自动同步 PR：release-please 在 %s 发出 stable 版 %s 后触发。\n\n' "$GITHUB_REF_NAME" "$TAG"
+            printf '此 PR 把发版分支的 release commit（版本号/CHANGELOG）带回 %s，使其版本基线与已发 stable 对齐，下个 rc 周期从 %s 起跳。\n\n' "$SYNC_TO" "$TAG"
+            printf '## 合并方式\n\n**Create a merge commit**（不要 squash/rebase——历史即发布血统）。\n\n' 
+            printf '## 若有版本文件冲突（%s 已进 rc 周期）\n\n取本 PR 侧（%s）的高版本号；Rust 仓库解决后重跑 \\'cargo generate-lockfile\\' 校准 lock。\n' "$SYNC_TO" "$GITHUB_REF_NAME")"
+          if ! err=$(gh pr create \
+              --base "$SYNC_TO" --head "$GITHUB_REF_NAME" \
+              --title "chore: sync ${GITHUB_REF_NAME} → ${SYNC_TO}（${TAG} released）" \
+              --body "$body" 2>&1); then
+            case "$err" in
+              *'already exists'*) echo "::notice::同向 PR 已存在，幂等跳过（PR head 指向分支头，自动含本次 release commit）" ;;
+              *) echo "::error::同步 PR 创建失败：$err"; exit 1 ;;
+            esac
+          else
+            echo "$err"
+          fi

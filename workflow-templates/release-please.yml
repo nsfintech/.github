@@ -43,6 +43,10 @@ jobs:
       # test 分支切 rc 预发布（vX.Y.Z-rc.N），main 切 stable。分支名不同改这里的判断。
       prerelease: ${{ github.ref_name == 'test' }}
       prerelease-type: rc
+      # stable 发版后自动开 main→test 同步 PR（rc 不触发；只开 PR 不自动合并，
+      # 版本冲突需人工裁决取 main 侧高版本号；合并用 merge commit）。
+      # 分支名不同改这里（如 sync-back-to: develop）。
+      sync-back-to: test
       # 可选：固定 fork（nsfintech/release-please）版本，默认 main（跟随最新）
       # release-please-ref: <commit>
     secrets: inherit
