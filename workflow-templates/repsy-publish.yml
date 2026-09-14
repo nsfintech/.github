@@ -56,8 +56,9 @@ jobs:
       # pypi 端每 target 一个 abi3 wheel。交叉工具链由 workflow 自动装
       # （nsfintech/actions 的 setup-cross-tools，缓存后秒级命中）
       cross-targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
-      # tag 必须在 test 分支历史上（防手工 tag 绕过分支 CI 直接发布）
-      require-branch: test
+      # tag 必须在所配分支任一历史上（逗号分隔）：rc tag 在 test、stable tag 在 main
+      #（防手工 tag 绕过分支 CI 直接发布；release-please 的 stable release commit 只在 main）
+      require-branch: test,main
       publish-pypi: true
       pypi-working-directory: python
     # 无需 secrets: inherit -- 凭证来自 runner .env，不是 GitHub secret
