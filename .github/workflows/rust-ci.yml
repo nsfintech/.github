@@ -78,6 +78,20 @@ jobs:
             echo "::add-mask::$REPSY_CARGO_TOKEN"
             echo "CARGO_REGISTRIES_REPSY_TOKEN=$REPSY_CARGO_TOKEN" >> "$GITHUB_ENV"
           fi
+      # 构建工具兜底:libz-ng-sys(pingora 传递依赖)等 -sys crate 需 cmake;
+      # 自托管 runner 系统更新可能移除已装工具(2026-09 实例:cmake 消失致 gateway clippy 红),
+      # 缺则补装,有则跳过(幂等,几秒)。sudo 不可用时给明确报错而非 cargo 深处才暴露。
+      - name: 补齐构建工具链(缺则装)
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            echo "cmake 缺失,尝试安装..."
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update -qq && sudo apt-get install -y -qq cmake
+            else
+              echo "::error::runner 无 cmake 且非 apt 系,请手工补齐(自托管 runner 预置工具漂移)"
+              exit 1
+            fi
+          fi
       - run: cargo clippy --all-targets -- -D warnings
 
   deny:
