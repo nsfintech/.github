@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/nsfintech/.github/compare/v1.15.0...v1.15.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* rust-ci 桥接 repsy cargo 凭证,clippy/deny 支持私有 crate 依赖 ([#62](https://github.com/nsfintech/.github/issues/62)) ([d1c4e05](https://github.com/nsfintech/.github/commit/d1c4e059a76fd5e350777c70d4cee669f1db628a))
+
 ## [1.15.0](https://github.com/nsfintech/.github/compare/v1.14.2...v1.15.0) (2026-09-14)
 
 
