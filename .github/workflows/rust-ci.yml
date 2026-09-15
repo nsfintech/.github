@@ -79,23 +79,23 @@ jobs:
             echo "CARGO_REGISTRIES_REPSY_TOKEN=$REPSY_CARGO_TOKEN" >> "$GITHUB_ENV"
           fi
       # 构建工具兜底:libz-ng-sys(pingora 传递依赖)等 -sys crate 需 cmake;
-      # 自托管 runner 系统更新可能移除已装工具(2026-09 实例:cmake 消失致 gateway clippy 红),
-      # 缺则按发行版补装,有则跳过(幂等,几秒)。
-      - name: 补齐构建工具链(缺则装)
+      # 自托管 runner 系统更新可能移除已装工具(2026-09 实例:cmake 消失致 gateway clippy 红)
+      # 且 runner 用户 sudo 需密码 -- 用免 root 方案:官方静态 cmake 包解到 ~/.local/bin
+      # (PATH 前置,后续步骤可用),有 cmake 则直接跳过(幂等)。缓存到 ~/.local/cmake,
+      # 已解压则秒过。
+      - name: 补齐 cmake(缺则装静态包到 ~/.local,免 root)
         run: |
-          command -v cmake >/dev/null 2>&1 && exit 0
-          echo "cmake 缺失,按发行版补装..."
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq cmake
-          elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y -q cmake
-          elif command -v yum >/dev/null 2>&1; then
-            sudo yum install -y -q cmake
-          else
-            echo "::error::runner 无 cmake 且不识别包管理器,请手工补齐(自托管 runner 预置工具漂移)"
-            exit 1
+          command -v cmake >/dev/null 2>&1 && { echo "cmake 已存在,跳过"; exit 0; }
+          PREFIX="$HOME/.local"
+          if [ ! -x "$PREFIX/bin/cmake" ]; then
+            echo "下载静态 cmake..."
+            ver="4.1.2"
+            url="https://github.com/Kitware/CMake/releases/download/v${ver}/cmake-${ver}-linux-x86_64.tar.gz"
+            mkdir -p "$PREFIX"
+            curl -fsSL --retry 5 "$url" | tar -xz --strip-components=1 -C "$PREFIX"
           fi
-          command -v cmake >/dev/null 2>&1 || { echo "::error::cmake 安装后仍不可用,请检查 PATH"; exit 1; }
+          echo "$PREFIX/bin" >> "$GITHUB_PATH"
+          "$PREFIX/bin/cmake" --version | head -1
       - run: cargo clippy --all-targets -- -D warnings
 
   deny:
