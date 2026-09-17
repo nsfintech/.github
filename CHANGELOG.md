@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/nsfintech/.github/compare/v1.16.0...v1.16.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* sync-back 对单分支仓库的防御 + 本仓 release 关闭 sync-back ([#70](https://github.com/nsfintech/.github/issues/70)) ([19a5982](https://github.com/nsfintech/.github/commit/19a5982e13a2f7a348c6830b81d319904da5e723))
+
 ## [1.16.0](https://github.com/nsfintech/.github/compare/v1.15.3...v1.16.0) (2026-09-17)
 
 
