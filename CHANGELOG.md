@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.3](https://github.com/nsfintech/.github/compare/v1.15.2...v1.15.3) (2026-09-17)
+
+
+### Bug Fixes
+
+* pg-rust-tests 可选 Node 环境(setup action 引入,不依赖宿主机预装) ([#66](https://github.com/nsfintech/.github/issues/66)) ([e406245](https://github.com/nsfintech/.github/commit/e406245f15ea8f21af63132e749f107b43302518))
+
 ## [1.15.2](https://github.com/nsfintech/.github/compare/v1.15.1...v1.15.2) (2026-09-17)
 
 
