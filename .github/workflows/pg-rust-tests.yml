@@ -92,6 +92,17 @@ jobs:
         working-directory: ${{ inputs.setup-working-directory }}
         run: ${{ inputs.setup-command }}
 
+      # repsy 私有 registry 凭证桥接(runner .env -> cargo 认的环境变量名)。
+      # 依赖私有 crate 的仓库(如 rsflow/gateway 拉 rslog)需要;不依赖的仓库
+      # REPSY_CARGO_TOKEN 为空则跳过,cargo 走公开 crates.io 不受影响。
+      # 与 rust-ci 模板同款;mask 防意外回显。
+      - name: 桥接 repsy cargo 凭证(依赖私有 crate 时)
+        run: |
+          if [ -n "${REPSY_CARGO_TOKEN:-}" ]; then
+            echo "::add-mask::$REPSY_CARGO_TOKEN"
+            echo "CARGO_REGISTRIES_REPSY_TOKEN=$REPSY_CARGO_TOKEN" >> "$GITHUB_ENV"
+          fi
+
       - name: cargo test
         env:
           ${{ inputs.env-name }}: ${{ env.PG_TEST_URL }}
