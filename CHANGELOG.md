@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2](https://github.com/nsfintech/.github/compare/v1.15.1...v1.15.2) (2026-09-17)
+
+
+### Bug Fixes
+
+* pg-rust-tests 桥接 repsy cargo 凭证,支持私有 crate 依赖 ([#64](https://github.com/nsfintech/.github/issues/64)) ([98c038a](https://github.com/nsfintech/.github/commit/98c038ac2e288b6e5db3927648e56f39ff513312))
+
 ## [1.15.1](https://github.com/nsfintech/.github/compare/v1.15.0...v1.15.1) (2026-09-15)
 
 
