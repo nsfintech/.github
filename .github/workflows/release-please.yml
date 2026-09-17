@@ -66,10 +66,10 @@ on:
         type: string
         default: 'rc'
       sync-back-to:
-        description: 'stable 发版后自动开 PR 同步回的分支（如 test）；空=不启用。仅 stable release 触发（rc 不触发），避免 test 版本基线落后已发 stable；幂等（同向 PR 已存在则跳过）'
+        description: 'stable 发版后自动开 PR 同步回的分支，默认 test（组织模型：main 发 stable 必同步回 test，防版本基线落后）。仅 stable release 触发（rc 不触发）；幂等（无领先提交或同向 PR 已存在则跳过）。不使用双分支模型的仓库显式传空串关闭'
         type: string
         required: false
-        default: ''
+        default: 'test'
     outputs:
       release_created:
         description: '本次运行是否创建了 release（"true" / "false"）'
