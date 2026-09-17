@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/nsfintech/.github/compare/v1.15.3...v1.16.0) (2026-09-17)
+
+
+### Features
+
+* release-please sync-back-to 默认 test(组织模型默认生效) ([#68](https://github.com/nsfintech/.github/issues/68)) ([2a2a95c](https://github.com/nsfintech/.github/commit/2a2a95c8117616695035bb6f0434cf900d3e5459))
+
 ## [1.15.3](https://github.com/nsfintech/.github/compare/v1.15.2...v1.15.3) (2026-09-17)
 
 
