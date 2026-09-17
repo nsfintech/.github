@@ -11,7 +11,12 @@
 # runner 选择:service 容器要求 runner 宿主机有 docker。组织内 self-hosted
 # runner 未必装 docker,因此默认 runs-on: ubuntu-latest(GitHub 托管,配额计费);
 # 调用方确认自己的 self-hosted runner 有 docker 时,可传 runner-labels 改跑
-# self-hosted。
+# self-hosted(注意:入参为【单标签字符串】,内部包成单元素数组;self-hosted
+# 是 runner 默认标签,单传 "self-hosted" 即可命中,别传 "[a, b]" 数组字面量)。
+#
+# Node 环境:setup-command 需要 node/pnpm 时(如 rust-embed 仓库测试前建前端
+# dist),传 node-version,模板用 actions/setup-node + pnpm/action-setup 引入,
+# 不依赖 runner 宿主机预装(与 node-ci 模板同款)。
 #
 # 模板只固化「起 PG + 注入连接串 + 跑测试命令」,不固化测试内部的 fixture
 # 设计(每测试独立库/共享库/TRUNCATE 是 per-repo 决策)。参考实现:
@@ -49,6 +54,14 @@ on:
         description: 'setup-command 的工作目录(相对仓库根,如 web)'
         type: string
         default: '.'
+      node-version:
+        description: 'Node 版本(actions/setup-node;setup-command 需要 node/pnpm 时传,如 24)。空则不装——setup-command 为纯 shell 时使用'
+        type: string
+        default: ''
+      pnpm-version:
+        description: 'pnpm 版本(pnpm/action-setup;仅 node-version 非空时生效)。空则读 package.json 的 packageManager 字段(推荐该方式固定版本)'
+        type: string
+        default: ''
       runner-labels:
         description: 'runner 标签(默认 ubuntu-latest;service 容器需要 runner 有 docker,确认 self-hosted 有 docker 后可改 [self-hosted, linux])'
         type: string
@@ -86,6 +99,21 @@ jobs:
           toolchain: ${{ inputs.toolchain }}
 
       - uses: Swatinem/rust-cache@v2
+
+      # Node/pnpm 环境:setup-command 需要时(如 rust-embed 仓库先建前端 dist)
+      # 经 setup action 引入,不依赖 runner 宿主机预装 node——与 node-ci 模板同款:
+      # pnpm/action-setup 先于 setup-node(cache: pnpm 依赖 pnpm 已就位)。
+      - uses: pnpm/action-setup@v4
+        if: inputs.node-version != ''
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - uses: actions/setup-node@v4
+        if: inputs.node-version != ''
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.setup-working-directory }}/pnpm-lock.yaml
 
       - name: Setup (pre-test)
         if: inputs.setup-command != ''
