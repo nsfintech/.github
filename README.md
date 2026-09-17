@@ -131,9 +131,9 @@ nsfintech 组织的公共模板仓库，存放组织级可复用 workflow 与 st
 | `token` | string | `GITHUB_TOKEN` | 默认调用方 token；若需 release PR/tag 触发其它 workflow，传 PAT/App token |
 | `prerelease` | boolean | `false` | `true`=预发布模式，切 `vX.Y.Z-rc.N`（不前移 major tag、不写 `CHANGELOG.md`）；caller 按分支传，如 `${{ github.ref_name == 'test' }}` |
 | `prerelease-type` | string | `rc` | 预发布类型，生成 `vX.Y.Z-rc.N` |
-| `sync-back-to` | string | 空 | stable 发版后自动开同步回 PR 的目标分支（如 `test`）；空=不启用。仅 stable 触发（rc 不触发）、幂等（无领先提交或 PR 已存在则跳过）、只开 PR 不自动合并（test 已进 rc 周期时版本冲突需人工取 main 侧高版本号，合并用 merge commit）。发版分支的 release commit（版本号/CHANGELOG）只落在发版分支，不回同步则开发分支版本基线持续落后、冲突滚雪球 |
+| `sync-back-to` | string | `test` | stable 发版后自动开同步回 PR 的目标分支；默认 `test`（组织模型：main 发 stable 必同步回 test，防版本基线落后）。仅 stable 触发（rc 不触发）、幂等（无领先提交或 PR 已存在则跳过）、只开 PR 不自动合并（test 已进 rc 周期时版本冲突需人工取 main 侧高版本号，合并用 merge commit）。发版分支的 release commit（版本号/CHANGELOG）只落在发版分支，不回同步则开发分支版本基线持续落后、冲突滚雪球。不使用双分支模型的仓库显式传空串关闭 |
 
-**自动同步回（sync-back-to）**：推荐 test→main 模型的仓库配 `sync-back-to: test`。stable release 创建的哪一刘，模板自动开 `chore: sync main → test（vX.Y.Z released）` PR 把 release commit 带回 test。它不自动合并——合并时机与冲突裁决留给人工；PR 从分支头开（同向 PR 已存在则跳过），后续 main 新提交自动包含。
+**自动同步回（sync-back-to）**：默认开启（`test`），test→main 模型的仓库无需配置。stable release 创建的同时，模板自动开 `chore: sync main → test（vX.Y.Z released）` PR 把 release commit 带回 test。它不自动合并——合并时机与冲突裁决留给人工；PR 从分支头开（同向 PR 已存在则跳过），后续 main 新提交自动包含。单分支或非 test→main 模型的仓库显式传 `sync-back-to: ''` 关闭。
 
 **输出**（供 caller 发版后处理用）：`release_created`（本次是否创建 release）、`tag_name`（如 `v1.1.0` 或 `v1.1.0-rc.3`）、`prerelease`（本次 release 是否预发布——caller 前移 major tag 等作业据此跳过 rc）。
 
