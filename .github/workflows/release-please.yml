@@ -310,6 +310,11 @@ jobs:
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |
           set -euo pipefail
+          # 目标分支不存在(单分支仓库未显式关 sync-back)则跳过,不 fail
+          if ! gh api "repos/${GITHUB_REPOSITORY}/branches/${SYNC_TO}" --jq '.name' >/dev/null 2>&1; then
+            echo "::notice::分支 ${SYNC_TO} 不存在(单分支仓库?),跳过 sync-back;不需要可在调用处传 sync-back-to: '' 关闭"
+            exit 0
+          fi
           ahead=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${SYNC_TO}...${GITHUB_REF_NAME}" --jq '.ahead_by' 2>/dev/null || echo 1)
           if [ "$ahead" = "0" ]; then
             echo "::notice::${GITHUB_REF_NAME} 无领先 ${SYNC_TO} 的提交，无需同步"

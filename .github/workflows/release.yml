@@ -22,6 +22,8 @@ jobs:
     uses: ./.github/workflows/release-please.yml
     with:
       release-type: simple
+      # 本仓是单分支模型(只有 main),关掉默认开启的 sync-back(不存在 test 分支)
+      sync-back-to: ''
     secrets: inherit
 
   update-major-tag:
