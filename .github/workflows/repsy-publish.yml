@@ -238,6 +238,14 @@ jobs:
       # llvm-tools 提供 lld-link(rust-lld)/llvm-ar:windows msvc 链接 cdylib
       # (DLL/.node)必需,cargo-xwin 的 symlink_llvm_tool 从 rustup 组件取
       # (actions 仓库 self-test 实测)。
+      # dtolnay 步前先注入持久盘 ~/.cargo/bin:self-hosted 上 rustup 由其
+      # 首跑装入且磁盘持久,但 GITHUB_PATH 注入仅本 job 生效,后续每个 job
+      # 都重新 curl rustup-init(网络差时静默重试可卡 5-7 分钟,2026-09-18
+      # rservice rc.1 实测 449s);提前注入使 `command -v rustup` 命中即永久
+      # 跳过。裸机首跑无该目录时注入空路径,dtolnay 照常安装,行为不变。
+      - name: rustup 在 runner 持久盘,注入 PATH(免每 job 重下 rustup-init)
+        if: ${{ inputs.publish-cargo || inputs.publish-npm || inputs.publish-pypi }}
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: 装 Rust toolchain
         if: ${{ inputs.publish-cargo || inputs.publish-npm || inputs.publish-pypi }}
         uses: dtolnay/rust-toolchain@v1
