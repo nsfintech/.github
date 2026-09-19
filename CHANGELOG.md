@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.2](https://github.com/nsfintech/.github/compare/v1.16.1...v1.16.2) (2026-09-19)
+
+
+### Bug Fixes
+
+* dtolnay 步前注入持久盘 ~/.cargo/bin,免每 job 重下 rustup-init ([#73](https://github.com/nsfintech/.github/issues/73)) ([10cf510](https://github.com/nsfintech/.github/commit/10cf5106a242eb4f7109289a3853ef738412d19e))
+* pg-rust-tests 去掉 Swatinem/rust-cache 步骤 ([#72](https://github.com/nsfintech/.github/issues/72)) ([e378832](https://github.com/nsfintech/.github/commit/e37883268805183070f02ad8e7a0bce7bfaffdb1))
+
 ## [1.16.1](https://github.com/nsfintech/.github/compare/v1.16.0...v1.16.1) (2026-09-17)
 
 
