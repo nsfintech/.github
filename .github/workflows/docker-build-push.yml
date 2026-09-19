@@ -86,6 +86,12 @@ jobs:
       # 再让 buildx 用 caller 传入的 context 只打包运行镜像。这样编译复用 runner 的
       # ~/.cargo/registry + target 缓存、镜像不用装编译器。跑之前用 dtolnay/rust-toolchain
       # 装 Rust(build-command-toolchain,默认 stable),runner 本身不预装。
+      # dtolnay 步前先注入持久盘 ~/.cargo/bin(self-hosted 上 rustup 磁盘持久但
+      # GITHUB_PATH 仅本 job 生效,否则每个 job 重新 curl rustup-init,网络差时
+      # 静默重试可卡 5-7 分钟;裸机首跑无该目录时注入空路径,行为不变)。
+      - name: rustup 在 runner 持久盘,注入 PATH(免每 job 重下 rustup-init)
+        if: ${{ inputs.build-command != '' }}
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: 装 Rust toolchain（build-command 用）
         if: ${{ inputs.build-command != '' }}
         uses: dtolnay/rust-toolchain@v1

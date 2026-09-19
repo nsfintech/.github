@@ -41,6 +41,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      # self-hosted:dtolnay 首跑把 rustup 装进 ~/.cargo(磁盘持久),但其
+      # PATH 注入经 GITHUB_PATH 仅本 job 生效;runner 服务 PATH 不含
+      # ~/.cargo/bin,后续每个 job 的 `command -v rustup` 都判未装,重新
+      # curl rustup-init(到 static.rust-lang.org 网络差时静默重试可卡
+      # 5-7 分钟,2026-09-18 rservice rc.1 实测 449s)。提前注入持久盘路径
+      # 使检测命中,该下载步骤永久跳过;裸机首跑无 ~/.cargo/bin 时注入
+      # 空路径,dtolnay 照常安装,行为不变。
+      - name: rustup 在 runner 持久盘,注入 PATH(免每 job 重下 rustup-init)
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ inputs.toolchain }}
@@ -57,6 +66,10 @@ jobs:
     # 的调用方在自身 job 级授 contents: read + actions: read 即可下载产物。
     steps:
       - uses: actions/checkout@v4
+      # 同 fmt job:注入持久盘 ~/.cargo/bin,免 dtolnay 每 job 重下 rustup-init
+      # (self-hosted 网络差时静默卡 5-7 分钟;详见 fmt job 注释)。
+      - name: rustup 在 runner 持久盘,注入 PATH(免每 job 重下 rustup-init)
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ inputs.toolchain }}
