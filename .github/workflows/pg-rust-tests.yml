@@ -98,7 +98,9 @@ jobs:
         with:
           toolchain: ${{ inputs.toolchain }}
 
-      - uses: Swatinem/rust-cache@v2
+      # 不用 Swatinem/rust-cache:本模板服务需要 docker 的 PG 测试,组织约定跑自建
+      # runner,宿主机 ~/.cargo 与 work 目录持久,缓存 restore/save(数百 MB 上传)
+      # 纯属浪费;且依赖一变 key 即废,命中率低。组织内其他模板(rust-ci 等)均不用。
 
       # Node/pnpm 环境:setup-command 需要时(如 rust-embed 仓库先建前端 dist)
       # 经 setup action 引入,不依赖 runner 宿主机预装 node——与 node-ci 模板同款:
