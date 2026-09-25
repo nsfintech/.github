@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/nsfintech/.github/compare/v1.17.0...v1.17.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* driver 里 extra-files 改为 camelCase extraFiles ([#77](https://github.com/nsfintech/.github/issues/77)) ([4ecfa6a](https://github.com/nsfintech/.github/commit/4ecfa6a948a80ee08fb78a95d8d211ea5ed7911e))
+
 ## [1.17.0](https://github.com/nsfintech/.github/compare/v1.16.2...v1.17.0) (2026-09-25)
 
 
