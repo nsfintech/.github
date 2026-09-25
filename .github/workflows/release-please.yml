@@ -221,8 +221,11 @@ jobs:
               };
               // extra-files（可选，JSON 数组字符串）：随 release PR 同步更新的额外文件。
               // 非法 JSON 直接抛错（driver catch 后 job 红），静默忽略会导致调用方以为同步了实际没有。
+              // 注意：Manifest.fromConfig 的 JS API 收 camelCase（extraFiles）；
+              // kebab-case 只在 release-please-config.json 文件路径里被转换，这里写
+              // 'extra-files' 会被 ...config 展开时静默丢弃（dry-run 复现过，勿改回）。
               if (process.env.EXTRA_FILES) {
-                releaserConfig['extra-files'] = JSON.parse(process.env.EXTRA_FILES);
+                releaserConfig.extraFiles = JSON.parse(process.env.EXTRA_FILES);
               }
               if (prerelease) {
                 releaserConfig.versioning = 'prerelease';
