@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/nsfintech/.github/compare/v1.16.2...v1.17.0) (2026-09-25)
+
+
+### Features
+
+* release-please 可复用 workflow 新增 extra-files 输入 ([#75](https://github.com/nsfintech/.github/issues/75)) ([dbb3a44](https://github.com/nsfintech/.github/commit/dbb3a44bb6df1ea83853b0c3775ceb27272cda52))
+
 ## [1.16.2](https://github.com/nsfintech/.github/compare/v1.16.1...v1.16.2) (2026-09-19)
 
 
