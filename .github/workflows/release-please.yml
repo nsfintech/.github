@@ -65,6 +65,11 @@ on:
         description: '预发布类型，默认 rc（生成 vX.Y.Z-rc.N）'
         type: string
         default: 'rc'
+      extra-files:
+        description: '随 release PR 同步更新的额外文件（release-please extra-files 语法，JSON 数组字符串，如 [{"type":"toml","path":"template/Cargo.toml","jsonpath":"$.dependencies.foo.version"}]）。toml/yaml/json/xml 类型用 jsonpath/xpath 定位精确替换（保注释）；generic 类型用 "version" 注释标记。不传则行为不变'
+        type: string
+        required: false
+        default: ''
       sync-back-to:
         description: 'stable 发版后自动开 PR 同步回的分支，默认 test（组织模型：main 发 stable 必同步回 test，防版本基线落后）。仅 stable release 触发（rc 不触发）；幂等（无领先提交或同向 PR 已存在则跳过）。不使用双分支模型的仓库显式传空串关闭'
         type: string
@@ -214,6 +219,11 @@ jobs:
                 draft: false,
                 includeComponentInTag: false,
               };
+              // extra-files（可选，JSON 数组字符串）：随 release PR 同步更新的额外文件。
+              // 非法 JSON 直接抛错（driver catch 后 job 红），静默忽略会导致调用方以为同步了实际没有。
+              if (process.env.EXTRA_FILES) {
+                releaserConfig['extra-files'] = JSON.parse(process.env.EXTRA_FILES);
+              }
               if (prerelease) {
                 releaserConfig.versioning = 'prerelease';
                 // rc 跳过 CHANGELOG.md 文件写入(只留 GH Release notes),避免与 main 的
@@ -280,6 +290,7 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
           PRERELEASE_TYPE: ${{ inputs.prerelease-type }}
           TARGET_BRANCH: ${{ github.ref_name }}
+          EXTRA_FILES: ${{ inputs.extra-files }}
           CMD: github-release
         run: node "$RUNNER_TEMP/rp-driver.js"
 
@@ -290,6 +301,7 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
           PRERELEASE_TYPE: ${{ inputs.prerelease-type }}
           TARGET_BRANCH: ${{ github.ref_name }}
+          EXTRA_FILES: ${{ inputs.extra-files }}
           CMD: release-pr
         run: node "$RUNNER_TEMP/rp-driver.js"
 
