@@ -1,0 +1,25 @@
+name: Repsy template tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/repsy-publish.yml'
+      - '.github/workflows/repsy-template-tests.yml'
+      - 'tests/test_repsy_injection.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repsy-publish.yml'
+      - '.github/workflows/repsy-template-tests.yml'
+      - 'tests/test_repsy_injection.py'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test dependency injection
+        run: python3 -B -m unittest discover -s tests -v
