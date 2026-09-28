@@ -318,11 +318,13 @@ jobs:
             cat > "$RUNNER_TEMP/inject-dep.pl" <<'PERLEOF'
           my ($c, $v) = @ENV{qw(PERL_INJECT_CRATE PERL_INJECT_VER)};
           my $q = quotemeta $c;
-          my $newline = "$c = { path = %s, version = \"=$v\", registry = \"repsy\" }";
-          if (s!^(\[workspace\.dependencies\][^\[]*?^\s*$q\s*=\s*\{\s*path\s*=\s*)("[^"]*")(.*?)\s*\}!$1 . $2 . sprintf(", version = \"=$v\", registry = \"repsy\"") . " }"!mse) {
-            print STDERR "injected $c -> =$v @repsy\n";
+          # section 边界只匹配行首的表头,不能把 features 数组中的 [ 当成边界。
+          # 保留 path 后的 features/default-features 等字段;源码内部依赖仍为纯 path。
+          my $section = qr/^[\t ]*\[[^\r\n]+\][\t ]*(?:\#[^\r\n]*)?$/m;
+          if (s~^(\[workspace\.dependencies\](?:(?!$section).)*?^\h*$q\h*=\h*\{\h*path\h*=\h*)("[^"]*")([^\r\n]*?)\h*\}~$1 . $2 . $3 . ", version = \"=$v\", registry = \"repsy\" }"~mse) {
+            print STDERR "injected $c -> =$v \@repsy\n";
           } else {
-            print STDERR "::notice::$c 在 [workspace.dependencies] 无 path 依赖行(无内部依赖者,跳过注入)";
+            print STDERR "::notice::$c 在 [workspace.dependencies] 无 path 依赖行(无内部依赖者,跳过注入)\n";
           }
           PERLEOF
             PERL_INJECT_CRATE="$c" PERL_INJECT_VER="$ver" perl -0pi "$RUNNER_TEMP/inject-dep.pl" Cargo.toml
