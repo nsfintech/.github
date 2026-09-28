@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.2](https://github.com/nsfintech/.github/compare/v1.17.1...v1.17.2) (2026-09-28)
+
+
+### Bug Fixes
+
+* handle feature arrays in Cargo dependency injection ([#79](https://github.com/nsfintech/.github/issues/79)) ([f4c5c80](https://github.com/nsfintech/.github/commit/f4c5c803b3d3f6382f53769cef6b8e7d6ab1cea7))
+
 ## [1.17.1](https://github.com/nsfintech/.github/compare/v1.17.0...v1.17.1) (2026-09-25)
 
 
